@@ -132,7 +132,8 @@ class PearsonRunner(Runner):
 
         upper_i, upper_j = np.triu_indices(len(genes), k=1)
         weights = corr_values[upper_i, upper_j]
-        sort_values = np.nan_to_num(np.abs(weights), nan=-np.inf)
+        sort_values = np.abs(weights).copy()
+        sort_values[np.isnan(sort_values)] = -np.inf
         order = np.argsort(sort_values)[::-1]
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
