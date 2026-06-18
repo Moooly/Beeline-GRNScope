@@ -43,7 +43,7 @@ class PearsonRunner(Runner):
 
         self._write_ranked_edges_from_corr_values(
             corr_values,
-            ExpressionData.index.to_numpy(),
+            np.asarray(ExpressionData.index),
             self.output_dir / 'rankedEdges.csv',
         )
 
@@ -71,8 +71,8 @@ class PearsonRunner(Runner):
             raise TypeError(f"CorrDF must be a DataFrame, got {type(CorrDF)}")
 
         self._write_ranked_edges_from_corr_values(
-            CorrDF.to_numpy(copy=False),
-            CorrDF.index.to_numpy(),
+            np.asarray(CorrDF.values, dtype=np.float64),
+            np.asarray(CorrDF.index),
             self.output_dir / 'rankedEdges.csv',
         )
 
@@ -90,12 +90,15 @@ class PearsonRunner(Runner):
                 f"expression_data must be a DataFrame, got {type(expression_data)}"
             )
 
-        values = expression_data.to_numpy(dtype=np.float64, copy=False)
+        values = np.asarray(expression_data.values, dtype=np.float64)
         if values.shape[0] < 2:
             return np.eye(values.shape[0], dtype=np.float64)
 
         if np.isnan(values).any():
-            return expression_data.T.corr(method='pearson').to_numpy(copy=False)
+            return np.asarray(
+                expression_data.T.corr(method='pearson').values,
+                dtype=np.float64,
+            )
 
         with np.errstate(invalid='ignore', divide='ignore'):
             corr_values = np.corrcoef(values)
