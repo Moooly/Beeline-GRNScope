@@ -1,3 +1,6 @@
+import csv
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -10,6 +13,7 @@ class PearsonRunner(Runner):
     The image field in the config should be set to 'local'."""
 
     EDGE_WRITE_CHUNK_SIZE = 200_000
+    DEFAULT_TOP_K_PER_TARGET = 10
 
     def generateInputs(self):
         '''
@@ -40,11 +44,15 @@ class PearsonRunner(Runner):
             raise TypeError(f"ExpressionData must be a DataFrame, got {type(ExpressionData)}")
 
         corr_values = self._compute_corr_values(ExpressionData)
+        genes = np.asarray(ExpressionData.index)
+        top_k = self._resolve_top_k(len(genes))
+        del ExpressionData
 
         self._write_ranked_edges_from_corr_values(
             corr_values,
-            np.asarray(ExpressionData.index),
+            genes,
             self.output_dir / 'rankedEdges.csv',
+            top_k=top_k,
         )
 
     def parseOutput(self):
@@ -74,7 +82,33 @@ class PearsonRunner(Runner):
             np.asarray(CorrDF.values, dtype=np.float64),
             np.asarray(CorrDF.index),
             self.output_dir / 'rankedEdges.csv',
+            top_k=self._resolve_top_k(len(CorrDF.index)),
         )
+
+    def _resolve_top_k(self, gene_count: int) -> int:
+        '''
+        Resolve how many source genes to keep for each target gene.
+
+        The default keeps PEARSON practical for large matrices. Set topK,
+        pearsonTopK, maxEdgesPerTarget, or GRNSCOPE_PEARSON_TOP_K to 0/all
+        only when you really want the full all-vs-all edge table.
+        '''
+        raw_value = (
+            self.params.get('topK')
+            or self.params.get('pearsonTopK')
+            or self.params.get('maxEdgesPerTarget')
+            or os.environ.get('GRNSCOPE_PEARSON_TOP_K')
+            or self.DEFAULT_TOP_K_PER_TARGET
+        )
+        if isinstance(raw_value, str) and raw_value.strip().lower() in {'0', 'all', 'none', 'false', 'off'}:
+            return max(0, gene_count - 1)
+        try:
+            top_k = int(raw_value)
+        except (TypeError, ValueError):
+            top_k = self.DEFAULT_TOP_K_PER_TARGET
+        if top_k <= 0:
+            return max(0, gene_count - 1)
+        return min(top_k, max(0, gene_count - 1))
 
     @staticmethod
     def _compute_corr_values(expression_data: pd.DataFrame) -> np.ndarray:
@@ -112,13 +146,14 @@ class PearsonRunner(Runner):
         corr_values: np.ndarray,
         genes: np.ndarray,
         out_path,
+        top_k=None,
     ) -> None:
         '''
-        Write a symmetric correlation matrix as a directed ranked edge list.
+        Write a correlation matrix as a directed ranked edge list.
 
-        The upper triangle is sorted once, then each undirected pair is
-        mirrored into both directed orientations. Output is written in chunks
-        to avoid materializing all directed edge rows in memory at once.
+        For each target gene, only the strongest top_k source genes are kept.
+        This prevents large datasets from producing all-vs-all edge tables
+        with millions of rows that overwhelm GRNScope during aggregation.
         '''
         corr_values = np.asarray(corr_values)
         genes = np.asarray(genes)
@@ -130,48 +165,48 @@ class PearsonRunner(Runner):
                 f"genes length {len(genes)} does not match corr shape {corr_values.shape}"
             )
 
-        upper_i, upper_j = np.triu_indices(len(genes), k=1)
-        weights = corr_values[upper_i, upper_j]
-        sort_values = np.abs(weights).copy()
-        sort_values[np.isnan(sort_values)] = -np.inf
-        order = np.argsort(sort_values)[::-1]
+        gene_count = len(genes)
+        if gene_count < 2:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, 'w', newline='') as f:
+                writer = csv.writer(f, delimiter='\t')
+                writer.writerow(['Gene1', 'Gene2', 'EdgeWeight'])
+            return
+
+        if top_k is None:
+            top_k = cls.DEFAULT_TOP_K_PER_TARGET
+        top_k = min(max(1, int(top_k)), gene_count - 1)
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, 'w') as f:
-            f.write('Gene1\tGene2\tEdgeWeight\n')
+        with open(out_path, 'w', newline='') as f:
+            writer = csv.writer(f, delimiter='\t')
+            writer.writerow(['Gene1', 'Gene2', 'EdgeWeight'])
+            rows = []
 
-        for start in range(0, len(order), cls.EDGE_WRITE_CHUNK_SIZE):
-            chunk_order = order[start:start + cls.EDGE_WRITE_CHUNK_SIZE]
-            source = genes[upper_i[chunk_order]]
-            target = genes[upper_j[chunk_order]]
-            chunk_weights = weights[chunk_order]
-            chunk_df = cls._build_directed_edge_chunk(source, target, chunk_weights)
-            chunk_df.to_csv(out_path, sep='\t', index=False, header=False, mode='a')
+            for target_index, target_gene in enumerate(genes):
+                target_scores = np.asarray(corr_values[:, target_index])
+                abs_scores = np.abs(target_scores).astype(np.float64, copy=True)
+                abs_scores[target_index] = -np.inf
+                abs_scores[~np.isfinite(abs_scores)] = -np.inf
 
-    @staticmethod
-    def _build_directed_edge_chunk(
-        source: np.ndarray,
-        target: np.ndarray,
-        weights: np.ndarray,
-    ) -> pd.DataFrame:
-        '''
-        Build a directed edge chunk by mirroring each source-target pair.
-        '''
-        directed_count = len(weights) * 2
-        gene1 = np.empty(directed_count, dtype=object)
-        gene2 = np.empty(directed_count, dtype=object)
-        edge_weight = np.empty(directed_count, dtype=weights.dtype)
+                if top_k < gene_count - 1:
+                    candidate_indices = np.argpartition(abs_scores, -top_k)[-top_k:]
+                else:
+                    candidate_indices = np.arange(gene_count)
+                    candidate_indices = candidate_indices[candidate_indices != target_index]
 
-        gene1[0::2] = source
-        gene2[0::2] = target
-        edge_weight[0::2] = weights
+                candidate_indices = candidate_indices[
+                    np.argsort(abs_scores[candidate_indices])[::-1]
+                ]
 
-        gene1[1::2] = target
-        gene2[1::2] = source
-        edge_weight[1::2] = weights
+                for source_index in candidate_indices:
+                    score = target_scores[source_index]
+                    if not np.isfinite(score):
+                        continue
+                    rows.append((genes[source_index], target_gene, float(score)))
+                    if len(rows) >= cls.EDGE_WRITE_CHUNK_SIZE:
+                        writer.writerows(rows)
+                        rows.clear()
 
-        return pd.DataFrame({
-            'Gene1': gene1,
-            'Gene2': gene2,
-            'EdgeWeight': edge_weight,
-        })
+            if rows:
+                writer.writerows(rows)
