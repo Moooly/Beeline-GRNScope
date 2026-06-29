@@ -43,7 +43,7 @@ def main(args):
     ref_net_df = pd.read_csv(opts.ground_truth_net_file) #to read reference network file
 
     #Learn signed graph with the parameters
-    G = learn_signed_graph(expression_df.to_numpy(), pos_density=float(opts.pos_density), neg_density=float(opts.neg_density),
+    G = learn_signed_graph(expression_df.values, pos_density=float(opts.pos_density), neg_density=float(opts.neg_density),
                                 assoc=opts.assoc, gene_names=np.array(expression_df.index))
     #G is a dataframe with each row indicating an edge between two genes.
     #Each edge is also associated with a weight, which is either positive or negative depending on the sign of the edge.

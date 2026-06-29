@@ -117,7 +117,7 @@ def run_inference(algo, in_file, out_file, client, genie3_trees, max_regulators_
         rf_kwargs['n_estimators'] = genie3_trees
         print(f"GENIE3 using n_estimators={rf_kwargs['n_estimators']}", flush=True)
         network = diy(
-            expression_data=inDF.to_numpy(dtype='float32', copy=False),
+            expression_data=inDF.values.astype('float32', copy=False),
             regressor_type='RF',
             regressor_kwargs=rf_kwargs,
             client_or_address=client,
@@ -125,7 +125,7 @@ def run_inference(algo, in_file, out_file, client, genie3_trees, max_regulators_
         )
     elif normalized_algo == 'GRNBOOST2':
         network = grnboost2(
-            inDF.to_numpy(dtype='float32', copy=False),
+            inDF.values.astype('float32', copy=False),
             client_or_address = client,
             gene_names = inDF.columns,
         )

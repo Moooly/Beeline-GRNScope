@@ -44,7 +44,7 @@ class PearsonRunner(Runner):
             raise TypeError(f"ExpressionData must be a DataFrame, got {type(ExpressionData)}")
 
         genes = np.asarray(ExpressionData.index)
-        values = ExpressionData.to_numpy(dtype=np.float32, copy=True)
+        values = np.asarray(ExpressionData.values, dtype=np.float32)
         del ExpressionData
 
         self._write_ranked_edges_from_expression_values(
