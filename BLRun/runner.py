@@ -4,6 +4,8 @@ import math
 import os
 from pathlib import Path
 import subprocess
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 
@@ -156,7 +158,7 @@ class Runner(ABC):
             )
 
     @staticmethod
-    def _adaptive_max_edges_per_target(gene_count: int | None) -> int:
+    def _adaptive_max_edges_per_target(gene_count: Optional[int]) -> int:
         if gene_count is None or gene_count <= 0:
             return 50
         if gene_count <= 500:
@@ -167,7 +169,7 @@ class Runner(ABC):
             return 25
         return 10
 
-    def _resolve_max_edges_per_target(self, gene_count: int | None = None) -> int | None:
+    def _resolve_max_edges_per_target(self, gene_count: Optional[int] = None) -> Optional[int]:
         normalized_algo_name = str(getattr(self, 'algo_name', '')).upper()
         raw_value = (
             self.params.get('maxRegulatorsPerTarget')
@@ -203,7 +205,7 @@ class Runner(ABC):
         source: str,
         target: str,
         score: float,
-        max_edges_per_target: int | None,
+        max_edges_per_target: Optional[int],
     ) -> None:
         if not source or not target:
             return
@@ -253,7 +255,7 @@ class Runner(ABC):
             writer.writerow(['Gene1', 'Gene2', 'EdgeWeight'])
             writer.writerows(self._candidate_rows(target_candidates))
 
-    def _read_gene_names(self, expression_path: Path) -> list[str]:
+    def _read_gene_names(self, expression_path: Path):
         with open(expression_path, 'r', newline='') as f:
             sample = f.read(65536)
             f.seek(0)
