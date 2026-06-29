@@ -1,11 +1,6 @@
 suppressPackageStartupMessages(library(monocle, warn.conflicts = FALSE , quietly = TRUE))
 suppressPackageStartupMessages(library(Scribe, warn.conflicts = FALSE, quietly = TRUE))
 suppressPackageStartupMessages(library (optparse, warn.conflicts = FALSE, quietly = TRUE))
-suppressPackageStartupMessages(library (igraph, warn.conflicts = FALSE, quietly = TRUE))
-
-cal_ncenter <- function(ncells, ncells_limit = 100){
-  round(2 * ncells_limit * log(ncells)/ (log(ncells) + log(ncells_limit)))
-}
 
 option_list <- list (
               make_option(c("-e","--expressionFile"), type = 'character',
@@ -56,10 +51,13 @@ option_list <- list (
               make_option(c("","--outFile"), , type = 'character',
               help= "outFile name to write the output ranked edges. Required."),
     
-              make_option(c("-i","--ignorePT"), action = 'store_true', default = FALSE, 
-              type = 'character',
-              help= "Ignores pseudotime computed using monocle and uses experiment time.")
-              )
+	              make_option(c("-i","--ignorePT"), action = 'store_true', default = FALSE,
+	              type = 'character',
+	              help= "Ignores pseudotime computed using monocle and uses experiment time."),
+
+	              make_option(c("","--maxRegulatorsPerTarget"), default = 0, type = 'integer',
+	              help= "Keep only this many strongest regulators per target. Use 0 to write all edges.")
+	              )
 
 parser <- OptionParser(option_list = option_list)
 arguments <- parse_args(parser, positional_arguments = FALSE)
@@ -176,6 +174,39 @@ if (arguments$method == 'uRDI'){
   stop("Method must be one of RDI, cRDI, uRDI, or ucRDI. 
        Run Rscript runScribe.R -h for more details.")
 }
-outGraph <- graph_from_adjacency_matrix(netOut, mode = 'directed', weighted=T)
-write.graph(outGraph, paste0(arguments$outPrefix,arguments$outFile),"ncol")
+maxRegulatorsPerTarget <- arguments$maxRegulatorsPerTarget
+if (is.na(maxRegulatorsPerTarget) || maxRegulatorsPerTarget <= 0) {
+  maxRegulatorsPerTarget <- Inf
+}
+
+sourceGenes <- rownames(netOut)
+targetGenes <- colnames(netOut)
+if (is.null(sourceGenes)) {
+  sourceGenes <- featureNames(CDS)
+}
+if (is.null(targetGenes)) {
+  targetGenes <- sourceGenes
+}
+
+outputPath <- paste0(arguments$outPrefix,arguments$outFile)
+file.create(outputPath)
+for (targetIndex in seq_along(targetGenes)) {
+  scores <- netOut[, targetIndex]
+  valid <- which(is.finite(scores) & scores != 0)
+  if (length(valid) == 0) {
+    next
+  }
+  ordered <- valid[order(abs(scores[valid]), decreasing = TRUE)]
+  selected <- ordered
+  if (!is.infinite(maxRegulatorsPerTarget)) {
+    selected <- head(ordered, maxRegulatorsPerTarget)
+  }
+  outDF <- data.frame(
+    Gene1 = sourceGenes[selected],
+    Gene2 = targetGenes[targetIndex],
+    EdgeWeight = scores[selected]
+  )
+  write.table(outDF, outputPath, sep = " ", quote = FALSE, row.names = FALSE,
+              col.names = FALSE, append = TRUE)
+}
 cat("Done.\n")

@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 
 from BLRun.runner import Runner
@@ -29,13 +28,21 @@ class GRNBoost2Runner(Runner):
         Function to run GRNBOOST2 algorithm
         '''
 
+        max_edges_per_target = self._resolve_max_edges_per_target()
+        cap_arg = (
+            [f"--maxRegulatorsPerTarget={max_edges_per_target}"]
+            if max_edges_per_target is not None
+            else []
+        )
         cmdToRun = ' '.join(['docker run --rm',
                             f"-v {self.working_dir}:/usr/working_dir",
                             '--expose=41269',
                             f'{self.image} /bin/sh -c \"time -v -o',
                             "/usr/working_dir/time.txt",
                             'python runArboreto.py --algo=GRNBoost2',
-                            '--inFile=/usr/working_dir/ExpressionData.csv', '--outFile=/usr/working_dir/outFile.txt', '\"'])
+                            '--inFile=/usr/working_dir/ExpressionData.csv',
+                            '--outFile=/usr/working_dir/outFile.txt',
+                            *cap_arg, '\"'])
 
         self._run_docker(cmdToRun)
 
@@ -51,9 +58,10 @@ class GRNBoost2Runner(Runner):
             print(str(outFile) + ' does not exist, skipping...')
             return
 
-        # Read output
-        OutDF = pd.read_csv(outFile, sep = '\t', header = 0)
-
-        self._write_ranked_edges(OutDF.rename(columns={
-            'TF': 'Gene1', 'target': 'Gene2', 'importance': 'EdgeWeight'
-        })[['Gene1', 'Gene2', 'EdgeWeight']])
+        self._write_ranked_edges_from_edge_files(
+            [outFile],
+            sep='\t',
+            source_col='TF',
+            target_col='target',
+            score_col='importance',
+        )

@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 
 from BLRun.runner import Runner
@@ -48,11 +47,9 @@ class PIDCRunner(Runner):
             print(str(outFile) + ' does not exist, skipping...')
             return
 
-        # Read output (headerless: col 0 = Gene1, col 1 = Gene2, col 2 = EdgeWeight)
-        OutDF = pd.read_csv(outFile, sep = '\t', header = None)
-
-        self._write_ranked_edges(pd.DataFrame({
-            'Gene1':      OutDF[0],
-            'Gene2':      OutDF[1],
-            'EdgeWeight': OutDF[2],
-        }))
+        self._write_ranked_edges_from_edge_files(
+            [outFile],
+            sep='\t',
+            header=None,
+            names=['Gene1', 'Gene2', 'EdgeWeight'],
+        )

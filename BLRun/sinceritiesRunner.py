@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 
 from BLRun.runner import Runner
@@ -65,7 +64,7 @@ class SINCERITIESRunner(Runner):
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
         colNames = PTData.columns
-        OutSubDF = [0]*len(colNames)
+        edge_files = []
         for idx in range(len(colNames)):
             # Read output
             outFile = 'outFile'+str(idx)+'.txt'
@@ -73,17 +72,12 @@ class SINCERITIESRunner(Runner):
                 # Quit if output file does not exist
                 print(str(workDir / outFile) + ' does not exist, skipping...')
                 return
-            OutSubDF[idx] = pd.read_csv(workDir / outFile, sep = ',', header = 0)
+            edge_files.append(workDir / outFile)
 
-        # megre the dataframe by taking the maximum value from each DF
-        # From here: https://stackoverflow.com/questions/20383647/pandas-selecting-by-label-sometimes-return-series-sometimes-returns-dataframe
-        outDF = pd.concat(OutSubDF)
-        # Group by rows code is from here:
-        # https://stackoverflow.com/questions/53114609/pandas-how-to-remove-duplicate-rows-but-keep-all-rows-with-max-value
-        res = outDF[outDF['Interaction'] == outDF.groupby(['SourceGENES','TargetGENES'])['Interaction'].transform('max')]
-        # Sort values in the dataframe
-        finalDF = res.sort_values('Interaction',ascending=False)
-        finalDF.drop(labels = 'Edges',axis = 'columns', inplace = True)
-        # SINCERITIES output is incorrectly orderd
-        finalDF.columns = ['Gene2','Gene1','EdgeWeight']
-        self._write_ranked_edges(finalDF[['Gene1', 'Gene2', 'EdgeWeight']])
+        self._write_ranked_edges_from_edge_files(
+            edge_files,
+            sep=',',
+            source_col='TargetGENES',
+            target_col='SourceGENES',
+            score_col='Interaction',
+        )

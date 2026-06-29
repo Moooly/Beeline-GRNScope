@@ -118,7 +118,7 @@ class SINGERunner(Runner):
                              header = 0, index_col = 0)
 
         colNames = PTData.columns
-        OutSubDF = [0]*len(colNames)
+        edge_files = []
 
         for idx in range(len(colNames)):
 
@@ -126,18 +126,11 @@ class SINGERunner(Runner):
             if not (workDir / str(idx) / 'SINGE_Ranked_Edge_List.txt').exists():
                 print(str(workDir / str(idx) / 'SINGE_Ranked_Edge_List.txt') + ' does not exist, skipping...')
                 return
+            edge_files.append(workDir / str(idx) / 'SINGE_Ranked_Edge_List.txt')
 
-            # Read output
-            OutSubDF[idx] = pd.read_csv(workDir / str(idx) / 'SINGE_Ranked_Edge_List.txt',
-                                sep = '\t', header = 0)
-        # megre the dataframe by taking the maximum value from each DF
-        # Code from here:
-        # https://stackoverflow.com/questions/20383647/pandas-selecting-by-label-sometimes-return-series-sometimes-returns-dataframe
-        outDF = pd.concat(OutSubDF)
-        outDF.columns= ['Gene1','Gene2','EdgeWeight']
-        # Group by rows code is from here:
-        # https://stackoverflow.com/questions/53114609/pandas-how-to-remove-duplicate-rows-but-keep-all-rows-with-max-value
-        res = outDF[outDF['EdgeWeight'] == outDF.groupby(['Gene1','Gene2'])['EdgeWeight'].transform('max')]
-        # Sort values in the dataframe
-        finalDF = res.sort_values('EdgeWeight', ascending=False)
-        self._write_ranked_edges(finalDF[['Gene1', 'Gene2', 'EdgeWeight']])
+        self._write_ranked_edges_from_edge_files(
+            edge_files,
+            sep='\t',
+            header=0,
+            names=['Gene1', 'Gene2', 'EdgeWeight'],
+        )

@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 
 from BLRun.runner import Runner
@@ -42,6 +41,7 @@ class SCSGLRunner(Runner):
         pos_density = str(self.params['pos_density'])
         neg_density = str(self.params['neg_density'])
         assoc = str(self.params['assoc'])
+        max_edges_per_target = str(self._resolve_max_edges_per_target() or 0)
 
         cmdToRun = ' '.join(['docker run --rm',
                             f"-v {self.working_dir}:/usr/working_dir",
@@ -52,6 +52,7 @@ class SCSGLRunner(Runner):
                             '--ground_truth_net_file=/usr/working_dir/GroundTruthNetwork.csv',
                             '--out_file=/usr/working_dir/outFile.txt',
                             '--pos_density='+pos_density, '--neg_density='+neg_density, '--assoc='+assoc,
+                            '--max_regulators_per_target='+max_edges_per_target,
                             '\"'])
 
         self._run_docker(cmdToRun)
@@ -68,9 +69,10 @@ class SCSGLRunner(Runner):
             print(str(outFile) + ' does not exist, skipping...')
             return
 
-        # Read output file
-        OutDF = pd.read_csv(outFile, sep = '\t', header = 0)
-
-        OutDF.sort_values(by="EdgeWeight", ascending=False, inplace=True)
-
-        self._write_ranked_edges(OutDF[['Gene1', 'Gene2', 'EdgeWeight']])
+        self._write_ranked_edges_from_edge_files(
+            [outFile],
+            sep='\t',
+            source_col='Gene1',
+            target_col='Gene2',
+            score_col='EdgeWeight',
+        )

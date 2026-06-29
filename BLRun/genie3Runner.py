@@ -51,6 +51,12 @@ class GENIE3Runner(Runner):
         Function to run GENIE3 algorithm
         '''
 
+        max_edges_per_target = self._resolve_max_edges_per_target()
+        cap_arg = (
+            [f"--maxRegulatorsPerTarget={max_edges_per_target}"]
+            if max_edges_per_target is not None
+            else []
+        )
         cmdToRun = ' '.join(['docker run --rm',
                             f"-v {self.working_dir}:/usr/working_dir",
                             f"-v {ARBORETO_SCRIPT}:/runArboreto.py:ro",
@@ -61,7 +67,8 @@ class GENIE3Runner(Runner):
                             '--inFile=/usr/working_dir/ExpressionData.csv',
                             '--outFile=/usr/working_dir/outFile.txt',
                             *arboreto_dask_args(),
-                            *genie3_tree_args(), '\"'])
+                            *genie3_tree_args(),
+                            *cap_arg, '\"'])
 
         self._run_docker(cmdToRun)
 
@@ -77,6 +84,12 @@ class GENIE3Runner(Runner):
         first_runner = runners[0]
         output_root = first_runner.output_dir.parent.parent
         run_ids = ','.join(runner.output_dir.parent.name for runner in runners)
+        max_edges_per_target = first_runner._resolve_max_edges_per_target()
+        cap_arg = (
+            [f"--maxRegulatorsPerTarget={max_edges_per_target}"]
+            if max_edges_per_target is not None
+            else []
+        )
 
         cmdToRun = ' '.join(['docker run --rm',
                             f"-v {output_root}:/usr/arboreto_runs",
@@ -89,7 +102,8 @@ class GENIE3Runner(Runner):
                             f'--runIds={run_ids}',
                             '--algorithmId=GENIE3',
                             *arboreto_dask_args(),
-                            *genie3_tree_args(), '\"'])
+                            *genie3_tree_args(),
+                            *cap_arg, '\"'])
 
         first_runner._run_docker(cmdToRun)
 
@@ -105,9 +119,10 @@ class GENIE3Runner(Runner):
             print(str(outFile) + ' does not exist, skipping...')
             return
 
-        # Read output
-        OutDF = pd.read_csv(outFile, sep = '\t', header = 0)
-
-        self._write_ranked_edges(OutDF.rename(columns={
-            'TF': 'Gene1', 'target': 'Gene2', 'importance': 'EdgeWeight'
-        })[['Gene1', 'Gene2', 'EdgeWeight']])
+        self._write_ranked_edges_from_edge_files(
+            [outFile],
+            sep='\t',
+            source_col='TF',
+            target_col='target',
+            score_col='importance',
+        )

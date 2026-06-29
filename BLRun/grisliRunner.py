@@ -1,6 +1,5 @@
 import os
 import pandas as pd
-import numpy as np
 
 from BLRun.runner import Runner
 
@@ -73,7 +72,8 @@ class GRISLIRunner(Runner):
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
         colNames = PTData.columns
-        OutSubDF = [0]*len(colNames)
+        gene_list = self._read_gene_names(self.input_dir / self.exprData)
+        target_candidates = {}
 
         for indx in range(len(colNames)):
             # Read output
@@ -83,33 +83,12 @@ class GRISLIRunner(Runner):
                 print(str(workDir / outFile) + ' does not exist, skipping...')
                 return
             OutDF = pd.read_csv(workDir / outFile, sep = ',', header = None)
-            # Sort values in a matrix using code from:
-            # https://stackoverflow.com/questions/21922806/sort-values-of-matrix-in-python
-            OutMatrix = OutDF.values
-            idx = np.argsort(OutMatrix, axis = None)
-            rows, cols = np.unravel_index(idx, OutDF.shape)
-            DFSorted = OutMatrix[rows, cols]
+            max_rank_score = len(gene_list) * len(gene_list)
+            self._update_candidates_from_matrix(
+                target_candidates,
+                OutDF.values,
+                gene_list,
+                transform=lambda values, offset=max_rank_score: offset - values,
+            )
 
-            # read input file for list of gene names
-            ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                             header = 0, index_col = 0)
-            GeneList = list(ExpressionData.index)
-            outFileName = workDir / str(indx) / 'rankedEdges.csv'
-            outFile = open(outFileName,'w')
-            outFile.write('Gene1'+'\t'+'Gene2'+'\t'+'EdgeWeight'+'\n')
-
-            for row, col, val in zip(rows, cols, DFSorted):
-                outFile.write('\t'.join([GeneList[row],GeneList[col],str((len(GeneList)*len(GeneList))-val)])+'\n')
-            outFile.close()
-
-            OutSubDF[indx] = pd.read_csv(outFileName, sep = '\t', header = 0)
-
-            # megre the dataframe by taking the maximum value from each DF
-            # From here: https://stackoverflow.com/questions/20383647/pandas-selecting-by-label-sometimes-return-series-sometimes-returns-dataframe
-        outDF = pd.concat(OutSubDF)
-
-        res = outDF.groupby(['Gene1','Gene2'],as_index=False).max()
-        # Sort values in the dataframe
-        finalDF = res.sort_values('EdgeWeight',ascending=False)
-
-        self._write_ranked_edges(finalDF)
+        self._write_candidate_edges(target_candidates)

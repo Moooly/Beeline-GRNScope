@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 
 from BLRun.runner import Runner
@@ -70,7 +69,7 @@ class GRNVBEMRunner(Runner):
                              header = 0, index_col = 0)
 
         colNames = PTData.columns
-        OutSubDF = [0]*len(colNames)
+        edge_files = []
 
         for indx in range(len(colNames)):
             outFileName = 'outFile'+str(indx)+'.txt'
@@ -78,15 +77,12 @@ class GRNVBEMRunner(Runner):
             if not (workDir / outFileName).exists():
                 print(str(workDir / outFileName) + ' does not exist, skipping...')
                 return
+            edge_files.append(workDir / outFileName)
 
-            # Read output
-            OutSubDF[indx] = pd.read_csv(workDir / outFileName, sep = '\t', header = 0)
-
-        outDF = pd.concat(OutSubDF)
-        FinalDF = outDF[outDF['Probability'] == outDF.groupby(['Parent','Child'])['Probability'].transform('max')]
-
-        self._write_ranked_edges(
-            FinalDF.sort_values('Probability', ascending=False).rename(
-                columns={'Parent': 'Gene1', 'Child': 'Gene2', 'Probability': 'EdgeWeight'}
-            )[['Gene1', 'Gene2', 'EdgeWeight']]
+        self._write_ranked_edges_from_edge_files(
+            edge_files,
+            sep='\t',
+            source_col='Parent',
+            target_col='Child',
+            score_col='Probability',
         )

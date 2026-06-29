@@ -1,6 +1,4 @@
-import os
 import pandas as pd
-import numpy as np
 
 from BLRun.runner import Runner
 
@@ -47,6 +45,7 @@ class LEAPRunner(Runner):
         '''
 
         maxLag = str(self.params['maxLag'])
+        max_edges_per_target = str(self._resolve_max_edges_per_target() or 0)
 
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
@@ -60,7 +59,8 @@ class LEAPRunner(Runner):
                                 'Rscript runLeap.R',
                                 "/usr/working_dir/ExpressionData" + str(idx) + ".csv",
                                 maxLag,
-                                "/usr/working_dir/outFile" + str(idx) + ".txt", '\"'])
+                                "/usr/working_dir/outFile" + str(idx) + ".txt",
+                                max_edges_per_target, '\"'])
 
             self._run_docker(cmdToRun, append=(idx > 0))
 
@@ -74,7 +74,7 @@ class LEAPRunner(Runner):
                              header = 0, index_col = 0)
 
         colNames = PTData.columns
-        OutSubDF = [0]*len(colNames)
+        edge_files = []
 
         for indx in range(len(colNames)):
             outFileName = 'outFile'+str(indx)+'.txt'
@@ -82,13 +82,13 @@ class LEAPRunner(Runner):
             if not (workDir / outFileName).exists():
                 print(str(workDir / outFileName) + ' does not exist, skipping...')
                 return
+            edge_files.append(workDir / outFileName)
 
-            # Read output
-            OutSubDF[indx] = pd.read_csv(workDir / outFileName, sep = '\t', header = 0)
-            OutSubDF[indx].Score = np.abs(OutSubDF[indx].Score)
-        outDF = pd.concat(OutSubDF)
-        FinalDF = outDF[outDF['Score'] == outDF.groupby(['Gene1','Gene2'])['Score'].transform('max')]
-
-        self._write_ranked_edges(FinalDF.sort_values('Score', ascending=False).rename(
-            columns={'Score': 'EdgeWeight'}
-        )[['Gene1', 'Gene2', 'EdgeWeight']])
+        self._write_ranked_edges_from_edge_files(
+            edge_files,
+            sep='\t',
+            source_col='Gene1',
+            target_col='Gene2',
+            score_col='Score',
+            score_abs=True,
+        )

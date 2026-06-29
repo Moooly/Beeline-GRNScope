@@ -1,6 +1,5 @@
 import os
 import pandas as pd
-import numpy as np
 
 from BLRun.runner import Runner
 
@@ -85,6 +84,9 @@ class SCODERunner(Runner):
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
         colNames = PTData.columns
+        gene_list = self._read_gene_names(self.input_dir / self.exprData)
+        target_candidates = {}
+
         for indx in range(len(colNames)):
             # Read output
             outFile = str(indx)+'/meanA.txt'
@@ -94,33 +96,11 @@ class SCODERunner(Runner):
                 return
             OutDF = pd.read_csv(workDir / outFile, sep = '\t', header = None)
 
-            # Sort values in a matrix using code from:
-            # https://stackoverflow.com/questions/21922806/sort-values-of-matrix-in-python
-            OutMatrix = np.abs(OutDF.values)
-            idx = np.argsort(OutMatrix, axis = None)[::-1]
-            rows, cols = np.unravel_index(idx, OutDF.shape)
-            DFSorted = OutMatrix[rows, cols]
+            self._update_candidates_from_matrix(
+                target_candidates,
+                OutDF.values,
+                gene_list,
+                absolute_scores=True,
+            )
 
-            # read input file for list of gene names
-            ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                             header = 0, index_col = 0)
-            GeneList = list(ExpressionData.index)
-
-            outFile = open(workDir / ('outFile'+str(indx)+'.csv'),'w')
-            outFile.write('Gene1'+'\t'+'Gene2'+'\t'+'EdgeWeight'+'\n')
-
-            for row, col, val in zip(rows, cols, DFSorted):
-                outFile.write('\t'.join([GeneList[row],GeneList[col],str(val)])+'\n')
-            outFile.close()
-
-        OutSubDF = [0]*len(colNames)
-        for indx in range(len(colNames)):
-            outFile = 'outFile'+str(indx)+'.csv'
-            OutSubDF[indx] = pd.read_csv(workDir / outFile, sep = '\t', header = 0)
-
-            OutSubDF[indx].EdgeWeight = np.abs(OutSubDF[indx].EdgeWeight)
-
-        outDF = pd.concat(OutSubDF)
-        FinalDF = outDF[outDF['EdgeWeight'] == outDF.groupby(['Gene1','Gene2'])['EdgeWeight'].transform('max')]
-        FinalDF = FinalDF.sort_values(['EdgeWeight'], ascending=False)
-        self._write_ranked_edges(FinalDF[['Gene1', 'Gene2', 'EdgeWeight']])
+        self._write_candidate_edges(target_candidates)

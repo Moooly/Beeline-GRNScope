@@ -13,7 +13,7 @@ class PearsonRunner(Runner):
     The image field in the config should be set to 'local'."""
 
     EDGE_WRITE_CHUNK_SIZE = 200_000
-    DEFAULT_TOP_K_PER_TARGET = 10
+    DEFAULT_CORRELATION_BLOCK_SIZE = 256
 
     def generateInputs(self):
         '''
@@ -43,16 +43,14 @@ class PearsonRunner(Runner):
         if not isinstance(ExpressionData, pd.DataFrame):
             raise TypeError(f"ExpressionData must be a DataFrame, got {type(ExpressionData)}")
 
-        corr_values = self._compute_corr_values(ExpressionData)
         genes = np.asarray(ExpressionData.index)
-        top_k = self._resolve_top_k(len(genes))
+        values = ExpressionData.to_numpy(dtype=np.float32, copy=True)
         del ExpressionData
 
-        self._write_ranked_edges_from_corr_values(
-            corr_values,
+        self._write_ranked_edges_from_expression_values(
+            values,
             genes,
             self.output_dir / 'rankedEdges.csv',
-            top_k=top_k,
         )
 
     def parseOutput(self):
@@ -93,47 +91,124 @@ class PearsonRunner(Runner):
         pearsonTopK, maxEdgesPerTarget, or GRNSCOPE_PEARSON_TOP_K to 0/all
         only when you really want the full all-vs-all edge table.
         '''
-        raw_value = (
-            self.params.get('topK')
-            or self.params.get('pearsonTopK')
-            or self.params.get('maxEdgesPerTarget')
-            or os.environ.get('GRNSCOPE_PEARSON_TOP_K')
-            or self.DEFAULT_TOP_K_PER_TARGET
-        )
+        raw_value = self.params.get('pearsonTopK') or os.environ.get('GRNSCOPE_PEARSON_TOP_K')
         if isinstance(raw_value, str) and raw_value.strip().lower() in {'0', 'all', 'none', 'false', 'off'}:
             return max(0, gene_count - 1)
+        if raw_value is None:
+            top_k = self._resolve_max_edges_per_target(gene_count)
+            return max(0, gene_count - 1) if top_k is None else min(top_k, max(0, gene_count - 1))
         try:
             top_k = int(raw_value)
         except (TypeError, ValueError):
-            top_k = self.DEFAULT_TOP_K_PER_TARGET
+            top_k = self._resolve_max_edges_per_target(gene_count)
+            return max(0, gene_count - 1) if top_k is None else min(top_k, max(0, gene_count - 1))
         if top_k <= 0:
             return max(0, gene_count - 1)
         return min(top_k, max(0, gene_count - 1))
 
     @staticmethod
+    def _standardize_expression_rows(values: np.ndarray) -> np.ndarray:
+        '''
+        Center and L2-normalize each gene vector so dot products are Pearson r.
+        '''
+        values = np.asarray(values, dtype=np.float32)
+        if values.ndim != 2:
+            raise ValueError(f"Expression values must be 2D, got shape {values.shape}")
+        if values.shape[1] == 0:
+            return np.zeros(values.shape, dtype=np.float32)
+
+        values = values.copy()
+        values -= values.mean(axis=1, keepdims=True)
+        norms = np.linalg.norm(values, axis=1)
+        valid = norms > 0
+        values[valid] /= norms[valid, None]
+        values[~valid] = 0.0
+        return values
+
+    def _resolve_corr_block_size(self) -> int:
+        try:
+            return max(
+                1,
+                int(os.environ.get(
+                    'GRNSCOPE_PEARSON_CORRELATION_BLOCK_SIZE',
+                    str(self.DEFAULT_CORRELATION_BLOCK_SIZE),
+                )),
+            )
+        except (TypeError, ValueError):
+            return self.DEFAULT_CORRELATION_BLOCK_SIZE
+
+    def _write_ranked_edges_from_expression_values(
+        self,
+        expression_values: np.ndarray,
+        genes: np.ndarray,
+        out_path,
+    ) -> None:
+        genes = np.asarray(genes)
+        gene_count = len(genes)
+        top_k = self._resolve_top_k(gene_count)
+
+        if gene_count < 2:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, 'w', newline='') as f:
+                writer = csv.writer(f, delimiter='\t')
+                writer.writerow(['Gene1', 'Gene2', 'EdgeWeight'])
+            return
+
+        standardized_values = self._standardize_expression_rows(expression_values)
+        block_size = self._resolve_corr_block_size()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(out_path, 'w', newline='') as f:
+            writer = csv.writer(f, delimiter='\t')
+            writer.writerow(['Gene1', 'Gene2', 'EdgeWeight'])
+            rows = []
+
+            for block_start in range(0, gene_count, block_size):
+                block_end = min(block_start + block_size, gene_count)
+                corr_block = standardized_values @ standardized_values[block_start:block_end].T
+
+                for block_offset, target_index in enumerate(range(block_start, block_end)):
+                    target_scores = corr_block[:, block_offset]
+                    abs_scores = np.abs(target_scores).astype(np.float32, copy=True)
+                    abs_scores[target_index] = -np.inf
+                    abs_scores[~np.isfinite(abs_scores)] = -np.inf
+
+                    candidate_count = min(top_k, gene_count - 1)
+                    if candidate_count <= 0:
+                        continue
+                    if candidate_count < gene_count - 1:
+                        candidate_indices = np.argpartition(abs_scores, -candidate_count)[-candidate_count:]
+                    else:
+                        candidate_indices = np.arange(gene_count)
+                        candidate_indices = candidate_indices[candidate_indices != target_index]
+                    candidate_indices = candidate_indices[
+                        np.argsort(abs_scores[candidate_indices])[::-1]
+                    ]
+
+                    for source_index in candidate_indices:
+                        score = target_scores[source_index]
+                        if not np.isfinite(score):
+                            continue
+                        rows.append((genes[source_index], genes[target_index], float(score)))
+                        if len(rows) >= self.EDGE_WRITE_CHUNK_SIZE:
+                            writer.writerows(rows)
+                            rows.clear()
+
+            if rows:
+                writer.writerows(rows)
+
+    @staticmethod
     def _compute_corr_values(expression_data: pd.DataFrame) -> np.ndarray:
         '''
-        Compute a gene x gene Pearson correlation matrix.
-
-        For complete numeric data this uses numpy directly, which avoids
-        pandas correlation overhead. If missing values are present, fall back
-        to pandas so pairwise-complete correlation behavior is preserved.
+        Legacy full-matrix Pearson calculation used only by parseOutput().
         '''
         if not isinstance(expression_data, pd.DataFrame):
             raise TypeError(
                 f"expression_data must be a DataFrame, got {type(expression_data)}"
             )
-
         values = np.asarray(expression_data.values, dtype=np.float64)
         if values.shape[0] < 2:
             return np.eye(values.shape[0], dtype=np.float64)
-
-        if np.isnan(values).any():
-            return np.asarray(
-                expression_data.T.corr(method='pearson').values,
-                dtype=np.float64,
-            )
-
         with np.errstate(invalid='ignore', divide='ignore'):
             corr_values = np.corrcoef(values)
         if corr_values.ndim == 0:
@@ -174,7 +249,7 @@ class PearsonRunner(Runner):
             return
 
         if top_k is None:
-            top_k = cls.DEFAULT_TOP_K_PER_TARGET
+            top_k = cls._adaptive_max_edges_per_target(gene_count)
         top_k = min(max(1, int(top_k)), gene_count - 1)
 
         out_path.parent.mkdir(parents=True, exist_ok=True)

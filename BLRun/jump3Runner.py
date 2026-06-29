@@ -1,6 +1,4 @@
-import os
 import pandas as pd
-import numpy as np
 
 from BLRun.runner import Runner
 
@@ -69,20 +67,9 @@ class JUMP3Runner(Runner):
         # Read output
         OutDF = pd.read_csv(outFile, sep = ',')
 
-        # Sort values in a matrix using code from:
-        # https://stackoverflow.com/questions/21922806/sort-values-of-matrix-in-python
-        OutMatrix = np.abs(OutDF.values)
-        idx = np.argsort(OutMatrix, axis = None)[::-1]
-        rows, cols = np.unravel_index(idx, OutDF.shape)
-        DFSorted = OutMatrix[rows, cols]
-
-        # read input file for list of gene names
-        ExpressionData = pd.read_csv(self.input_dir / 'ExpressionData.csv',
-                                         header = 0, index_col = 0)
-        GeneList = list(ExpressionData.index)
-
-        self._write_ranked_edges(pd.DataFrame({
-            'Gene1':      [GeneList[r] for r in rows],
-            'Gene2':      [GeneList[c] for c in cols],
-            'EdgeWeight': DFSorted,
-        }))
+        gene_list = self._read_gene_names(self.input_dir / 'ExpressionData.csv')
+        self._write_ranked_edges_from_matrix(
+            OutDF.values,
+            gene_list,
+            absolute_scores=True,
+        )

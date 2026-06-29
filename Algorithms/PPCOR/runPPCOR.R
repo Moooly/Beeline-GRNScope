@@ -2,6 +2,14 @@ library(ppcor)
 args <- commandArgs(trailingOnly = T)
 inFile <- args[1]
 outFile <-  args[2]
+maxRegulatorsPerTarget <- ifelse(length(args) >= 3, suppressWarnings(as.integer(args[3])), NA)
+pValueCutoff <- ifelse(length(args) >= 4, suppressWarnings(as.numeric(args[4])), 1.0)
+if (is.na(maxRegulatorsPerTarget) || maxRegulatorsPerTarget <= 0) {
+  maxRegulatorsPerTarget <- Inf
+}
+if (is.na(pValueCutoff)) {
+  pValueCutoff <- 1.0
+}
 
 # input expression data
 inputExpr <- read.table(inFile, sep=",", header = 1, row.names = 1)
@@ -13,9 +21,44 @@ rownames(inputExpr) <- c(geneNames)
 
 pcorResults=  pcor(x= t(as.matrix(inputExpr)), method = "spearman")
 
-# Write output to a file
-# https://stackoverflow.com/questions/38664241/ranking-and-counting-matrix-elements-in-r
-DF = data.frame(Gene1 = geneNames[c(row(pcorResults$estimate))], Gene2 = geneNames[c(col(pcorResults$estimate))]
-                , corVal = c(pcorResults$estimate), pValue =  c(pcorResults$p.value))
-outDF <- DF[order(DF$corVal, decreasing=TRUE), ]
-write.table(outDF, outFile, sep = "\t", quote = FALSE, row.names = FALSE)
+write.table(
+  data.frame(Gene1 = character(), Gene2 = character(), corVal = numeric(), pValue = numeric()),
+  outFile,
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+for (targetIndex in seq_along(geneNames)) {
+  scores <- pcorResults$estimate[, targetIndex]
+  pvalues <- pcorResults$p.value[, targetIndex]
+  scores[targetIndex] <- NA
+  pvalues[targetIndex] <- NA
+
+  valid <- which(is.finite(scores) & is.finite(pvalues))
+  if (length(valid) == 0) {
+    next
+  }
+
+  significant <- valid[pvalues[valid] <= pValueCutoff]
+  nonsignificant <- setdiff(valid, significant)
+  significant <- significant[order(abs(scores[significant]), decreasing = TRUE)]
+  nonsignificant <- nonsignificant[order(abs(scores[nonsignificant]), decreasing = TRUE)]
+  selected <- c(significant, nonsignificant)
+  if (!is.infinite(maxRegulatorsPerTarget)) {
+    selected <- head(selected, maxRegulatorsPerTarget)
+  }
+
+  if (length(selected) == 0) {
+    next
+  }
+
+  outDF <- data.frame(
+    Gene1 = geneNames[selected],
+    Gene2 = geneNames[targetIndex],
+    corVal = scores[selected],
+    pValue = pvalues[selected]
+  )
+  write.table(outDF, outFile, sep = "\t", quote = FALSE, row.names = FALSE,
+              col.names = FALSE, append = TRUE)
+}

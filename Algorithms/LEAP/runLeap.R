@@ -4,6 +4,10 @@ args <- commandArgs(trailingOnly = T)
 inFile <- args[1]
 maxLag <- as.numeric(args[2])
 outFile <-  args[3]
+maxRegulatorsPerTarget <- ifelse(length(args) >= 4, suppressWarnings(as.integer(args[4])), NA)
+if (is.na(maxRegulatorsPerTarget) || maxRegulatorsPerTarget <= 0) {
+  maxRegulatorsPerTarget <- Inf
+}
 
 # input expression data
 inputExpr <- read.table(inFile, sep=",", header = 1, row.names = 1)
@@ -17,9 +21,30 @@ rownames(inputExpr) <- c()
 MAC_results = MAC_counter(data = inputExpr, max_lag_prop=maxLag, MAC_cutoff = 0, 
                           file_name = "temp", lag_matrix = FALSE, symmetric = FALSE)
 
-# Write output to a file
-Gene1 <- geneNames[MAC_results[,'Row gene index']]
-Gene2 <- geneNames[MAC_results[,'Column gene index']]
-Score <- MAC_results[,'Correlation']
-outDF <- data.frame(Gene1, Gene2, Score)
-write.table(outDF, outFile, sep = "\t", quote = FALSE, row.names = FALSE)
+write.table(
+  data.frame(Gene1 = character(), Gene2 = character(), Score = numeric()),
+  outFile,
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+targetIndices <- unique(MAC_results[, 'Column gene index'])
+for (targetIndex in targetIndices) {
+  targetRows <- which(MAC_results[, 'Column gene index'] == targetIndex)
+  if (length(targetRows) == 0) {
+    next
+  }
+  orderedRows <- targetRows[order(abs(MAC_results[targetRows, 'Correlation']), decreasing = TRUE)]
+  selectedRows <- orderedRows
+  if (!is.infinite(maxRegulatorsPerTarget)) {
+    selectedRows <- head(orderedRows, maxRegulatorsPerTarget)
+  }
+  outDF <- data.frame(
+    Gene1 = geneNames[MAC_results[selectedRows, 'Row gene index']],
+    Gene2 = geneNames[targetIndex],
+    Score = MAC_results[selectedRows, 'Correlation']
+  )
+  write.table(outDF, outFile, sep = "\t", quote = FALSE, row.names = FALSE,
+              col.names = FALSE, append = TRUE)
+}

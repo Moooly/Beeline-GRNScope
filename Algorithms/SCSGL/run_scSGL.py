@@ -1,6 +1,5 @@
 # Please refer to https://github.com/SPLab-aviyente/scSGL/blob/main/notebooks/demo.ipynb
 
-import os
 import argparse
 import pandas as pd #to load read GSD dataset
 import numpy as np
@@ -8,7 +7,6 @@ import sys
 sys.path.append('scSGL') #to add a path to search for the requested module
 
 from pysrc.graphlearning import learn_signed_graph
-from pysrc.evaluation import auc #to evaluate inference with auprc/auroc
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -26,6 +24,8 @@ def get_parser() -> argparse.ArgumentParser:
         help='Association type')
     parser.add_argument('--out_file',
         help='Path to output file')
+    parser.add_argument('--max_regulators_per_target', type=int, default=0,
+        help='Keep only this many strongest regulators per target. Use 0 to write all edges.')
     
     return parser
 
@@ -45,9 +45,20 @@ def main(args):
     #Learn signed graph with the parameters
     G = learn_signed_graph(expression_df.to_numpy(), pos_density=float(opts.pos_density), neg_density=float(opts.neg_density),
                                 assoc=opts.assoc, gene_names=np.array(expression_df.index))
-    #G is a dataframe with each row indicating an edge between two genes. 
+    #G is a dataframe with each row indicating an edge between two genes.
     #Each edge is also associated with a weight, which is either positive or negative depending on the sign of the edge.
-    
+    if opts.max_regulators_per_target and opts.max_regulators_per_target > 0:
+        G = G.copy()
+        G["EdgeWeight"] = pd.to_numeric(G["EdgeWeight"], errors="coerce")
+        G = G.dropna(subset=["Gene1", "Gene2", "EdgeWeight"])
+        G["_abs_weight"] = G["EdgeWeight"].abs()
+        G = (
+            G.sort_values(["Gene2", "_abs_weight", "Gene1"], ascending=[True, False, True])
+             .groupby("Gene2", sort=False)
+             .head(opts.max_regulators_per_target)
+             .drop(columns=["_abs_weight"])
+        )
+
     G.to_csv(opts.out_file, index = False, sep = '\t')  #to write the output file
 
 if __name__ == "__main__":
