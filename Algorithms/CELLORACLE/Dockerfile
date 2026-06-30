@@ -7,6 +7,7 @@ RUN apt-get update \
         ca-certificates \
         git \
         time \
+        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 USER $MAMBA_USER
@@ -21,6 +22,8 @@ RUN micromamba install -y -n base -c conda-forge \
         scipy \
         scikit-learn \
         anndata \
+        bedtools \
+        pybedtools \
         scanpy \
     && micromamba clean -a -y
 
