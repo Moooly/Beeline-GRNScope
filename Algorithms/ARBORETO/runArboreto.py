@@ -5,10 +5,12 @@ import os
 from pathlib import Path
 import sys
 import pandas as pd
-from arboreto.algo import diy, grnboost2
+from arboreto.algo import diy
+from arboreto.core import EARLY_STOP_WINDOW_LENGTH, SGBM_KWARGS
 from distributed import Client
 
 DEFAULT_GENIE3_TREES = 500
+DEFAULT_GRNBOOST2_TREES = 5000
 GENIE3_RF_KWARGS = {
     'n_jobs': 1,
     'n_estimators': DEFAULT_GENIE3_TREES,
@@ -35,6 +37,9 @@ def parseArgs(args):
 
     parser.add_option('', '--genie3Trees', type='int', default=DEFAULT_GENIE3_TREES,
                       help='Number of random forest trees to use for GENIE3.')
+
+    parser.add_option('', '--grnboost2Trees', type='int', default=DEFAULT_GRNBOOST2_TREES,
+                      help='Maximum number of boosting trees to use for GRNBoost2.')
 
     parser.add_option('', '--runRoot', type='str', default=None,
                       help='Batch mode root containing run_id/algorithm/working_dir folders.')
@@ -134,7 +139,7 @@ def read_expression_matrix(in_file):
     return matrix
 
 
-def run_inference(algo, in_file, out_file, client, genie3_trees, max_regulators_per_target):
+def run_inference(algo, in_file, out_file, client, genie3_trees, grnboost2_trees, max_regulators_per_target):
     inDF = read_expression_matrix(in_file)
     print(f"{algo} loaded expression shape {inDF.shape} from {in_file}", flush=True)
 
@@ -151,10 +156,16 @@ def run_inference(algo, in_file, out_file, client, genie3_trees, max_regulators_
             gene_names=inDF.columns,
         )
     elif normalized_algo == 'GRNBOOST2':
-        network = grnboost2(
-            inDF.values.astype('float32', copy=False),
-            client_or_address = client,
-            gene_names = inDF.columns,
+        gbm_kwargs = dict(SGBM_KWARGS)
+        gbm_kwargs['n_estimators'] = grnboost2_trees
+        print(f"GRNBoost2 using n_estimators={gbm_kwargs['n_estimators']}", flush=True)
+        network = diy(
+            expression_data=inDF.values.astype('float32', copy=False),
+            regressor_type='GBM',
+            regressor_kwargs=gbm_kwargs,
+            client_or_address=client,
+            gene_names=inDF.columns,
+            early_stop_window_length=EARLY_STOP_WINDOW_LENGTH,
         )
     else:
         raise ValueError("Wrong algorithm name. Should either be GENIE3 or GRNBoost2.")
@@ -186,6 +197,7 @@ def main(args):
                     working_dir / 'outFile.txt',
                     client,
                     opts.genie3Trees,
+                    opts.grnboost2Trees,
                     opts.maxRegulatorsPerTarget,
                 )
         else:
@@ -197,6 +209,7 @@ def main(args):
                 opts.outFile,
                 client,
                 opts.genie3Trees,
+                opts.grnboost2Trees,
                 opts.maxRegulatorsPerTarget,
             )
     finally:

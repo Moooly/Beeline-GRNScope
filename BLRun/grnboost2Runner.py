@@ -7,6 +7,15 @@ from BLRun.runner import Runner
 ARBORETO_SCRIPT = Path(__file__).resolve().parent.parent / "Algorithms" / "ARBORETO" / "runArboreto.py"
 
 
+def count_expression_genes(expression_file):
+    try:
+        with open(expression_file, "r", encoding="utf-8") as handle:
+            header = handle.readline().rstrip("\r\n").split("\t")
+    except OSError:
+        return None
+    return max(0, len(header) - 1)
+
+
 def arboreto_dask_args():
     worker_count = os.environ.get("GRNSCOPE_ARBORETO_DASK_WORKERS")
     if not worker_count:
@@ -18,6 +27,32 @@ def arboreto_dask_args():
 
     threads_per_worker = os.environ.get("GRNSCOPE_ARBORETO_THREADS_PER_WORKER", "1")
     return [f"--nWorkers={worker_count}", f"--threadsPerWorker={threads_per_worker}"]
+
+
+def adaptive_grnboost2_tree_count(gene_count):
+    if gene_count is None or gene_count <= 0:
+        return 1000
+    if gene_count <= 500:
+        return 5000
+    if gene_count <= 2000:
+        return 2000
+    if gene_count <= 8000:
+        return 1000
+    return 500
+
+
+def resolve_grnboost2_tree_count(expression_file):
+    configured_tree_count = os.environ.get("GRNSCOPE_GRNBOOST2_TREES")
+    if configured_tree_count:
+        try:
+            return max(1, int(configured_tree_count))
+        except ValueError:
+            pass
+    return adaptive_grnboost2_tree_count(count_expression_genes(expression_file))
+
+
+def grnboost2_tree_args(expression_file):
+    return [f"--grnboost2Trees={resolve_grnboost2_tree_count(expression_file)}"]
 
 
 class GRNBoost2Runner(Runner):
@@ -61,6 +96,7 @@ class GRNBoost2Runner(Runner):
                             '--inFile=/usr/working_dir/ExpressionData.csv',
                             '--outFile=/usr/working_dir/outFile.txt',
                             *arboreto_dask_args(),
+                            *grnboost2_tree_args(self.working_dir / "ExpressionData.csv"),
                             *cap_arg, '\"'])
 
         self._run_docker(cmdToRun)
