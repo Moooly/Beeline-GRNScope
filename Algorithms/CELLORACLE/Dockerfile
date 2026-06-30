@@ -21,6 +21,6 @@ RUN micromamba install -y -n base -c conda-forge \
         scanpy \
     && micromamba clean -a -y
 
-RUN pip install --no-cache-dir celloracle
+RUN micromamba run -n base python -m pip install --no-cache-dir celloracle
 
 COPY runCellOracle.py /runCellOracle.py
