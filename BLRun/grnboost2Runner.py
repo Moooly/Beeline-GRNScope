@@ -1,6 +1,23 @@
+import os
 import pandas as pd
+from pathlib import Path
 
 from BLRun.runner import Runner
+
+ARBORETO_SCRIPT = Path(__file__).resolve().parent.parent / "Algorithms" / "ARBORETO" / "runArboreto.py"
+
+
+def arboreto_dask_args():
+    worker_count = os.environ.get("GRNSCOPE_ARBORETO_DASK_WORKERS")
+    if not worker_count:
+        try:
+            concurrent_tasks = max(1, int(os.environ.get("GRNSCOPE_MAX_CONCURRENT_ALGORITHMS", "2")))
+        except ValueError:
+            concurrent_tasks = 2
+        worker_count = str(max(1, (os.cpu_count() or 1) // concurrent_tasks))
+
+    threads_per_worker = os.environ.get("GRNSCOPE_ARBORETO_THREADS_PER_WORKER", "1")
+    return [f"--nWorkers={worker_count}", f"--threadsPerWorker={threads_per_worker}"]
 
 
 class GRNBoost2Runner(Runner):
@@ -36,12 +53,14 @@ class GRNBoost2Runner(Runner):
         )
         cmdToRun = ' '.join(['docker run --rm',
                             f"-v {self.working_dir}:/usr/working_dir",
+                            f"-v {ARBORETO_SCRIPT}:/runArboreto.py:ro",
                             '--expose=41269',
                             f'{self.image} /bin/sh -c \"time -v -o',
                             "/usr/working_dir/time.txt",
-                            'python runArboreto.py --algo=GRNBoost2',
+                            'python /runArboreto.py --algo=GRNBoost2',
                             '--inFile=/usr/working_dir/ExpressionData.csv',
                             '--outFile=/usr/working_dir/outFile.txt',
+                            *arboreto_dask_args(),
                             *cap_arg, '\"'])
 
         self._run_docker(cmdToRun)

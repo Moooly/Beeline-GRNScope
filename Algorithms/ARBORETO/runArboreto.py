@@ -107,8 +107,35 @@ def write_network(network, out_file, max_regulators_per_target):
     network.to_csv(out_file, index = False, sep = '\t')
 
 
+def read_expression_matrix(in_file):
+    header = pd.read_csv(in_file, sep='\t', nrows=0).columns.tolist()
+    if len(header) < 2:
+        raise ValueError(
+            f"{in_file} must be a tab-separated matrix with sample IDs in the first column "
+            "and gene names in the remaining columns."
+        )
+
+    expression_dtypes = {column: 'float32' for column in header[1:]}
+    try:
+        matrix = pd.read_csv(
+            in_file,
+            sep='\t',
+            index_col=0,
+            header=0,
+            dtype=expression_dtypes,
+            na_filter=False,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"{in_file} contains a non-numeric expression value. "
+            "The first column may contain sample IDs, but every other column must be numeric."
+        ) from exc
+
+    return matrix
+
+
 def run_inference(algo, in_file, out_file, client, genie3_trees, max_regulators_per_target):
-    inDF = pd.read_csv(in_file, sep = '\t', index_col = 0, header = 0, dtype='float32')
+    inDF = read_expression_matrix(in_file)
     print(f"{algo} loaded expression shape {inDF.shape} from {in_file}", flush=True)
 
     normalized_algo = str(algo).upper()
