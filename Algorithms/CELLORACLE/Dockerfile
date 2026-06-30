@@ -3,31 +3,43 @@ FROM mambaorg/micromamba:1.5.8
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential \
         ca-certificates \
         git \
         time \
-        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 USER $MAMBA_USER
-RUN micromamba install -y -n base -c conda-forge \
+RUN micromamba install -y -n base -c conda-forge -c bioconda \
         python=3.10 \
         pip \
         setuptools \
         wheel \
         cython \
-        numpy \
-        pandas \
+        numpy=1.26.4 \
+        pandas=1.5.3 \
         scipy \
         scikit-learn \
-        anndata \
+        h5py \
+        'matplotlib-base<3.7' \
+        seaborn \
+        numba \
+        'anndata<=0.10.8' \
+        'scanpy>=1.6' \
+        umap-learn \
+        pyarrow \
+        tqdm \
+        joblib \
+        python-igraph \
+        louvain \
+        goatools \
+        genomepy \
+        'gimmemotifs>=0.14.4,<=0.17.2' \
+        velocyto.py \
         bedtools \
-        pybedtools \
-        scanpy \
+        jupyter \
     && micromamba clean -a -y
 
-RUN micromamba run -n base python -m pip install --no-cache-dir --no-build-isolation "velocyto>=0.17" \
-    && micromamba run -n base python -m pip install --no-cache-dir celloracle
+RUN micromamba run -n base python -m pip install --no-cache-dir --no-deps celloracle==0.20.0 \
+    && micromamba run -n base python -c "import celloracle, velocyto, scanpy, anndata, genomepy, goatools, gimmemotifs, igraph, louvain; print('CellOracle image import check passed')"
 
 COPY runCellOracle.py /runCellOracle.py
