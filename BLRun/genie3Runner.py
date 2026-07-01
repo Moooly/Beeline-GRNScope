@@ -1,16 +1,25 @@
 import os
-import pandas as pd
 from pathlib import Path
+import shlex
+import shutil
 
 from BLRun.runner import Runner
 
 ARBORETO_SCRIPT = Path(__file__).resolve().parent.parent / "Algorithms" / "ARBORETO" / "runArboreto.py"
 
 
-def count_expression_genes(expression_file):
+ARBORETO_INPUT_ORIENTATION = "genesByCells"
+
+
+def count_expression_genes(expression_file, input_orientation="samplesByGenes"):
     try:
-        with open(expression_file, "r", encoding="utf-8") as handle:
-            header = handle.readline().rstrip("\r\n").split("\t")
+        if input_orientation == "genesByCells":
+            with open(expression_file, "r", encoding="utf-8") as handle:
+                next(handle, None)
+                return sum(1 for line in handle if line.strip())
+        else:
+            with open(expression_file, "r", encoding="utf-8") as handle:
+                header = handle.readline().rstrip("\r\n").split("\t")
     except OSError:
         return None
     return max(0, len(header) - 1)
@@ -29,6 +38,40 @@ def arboreto_dask_args():
     return [f"--nWorkers={worker_count}", f"--threadsPerWorker={threads_per_worker}"]
 
 
+def arboreto_matrix_args(params):
+    matrix_format = (
+        params.get("matrixFormat")
+        or params.get("sparseMatrix")
+        or os.environ.get("GRNSCOPE_ARBORETO_MATRIX_FORMAT")
+        or "auto"
+    )
+    if isinstance(matrix_format, bool):
+        matrix_format = "sparse" if matrix_format else "dense"
+    matrix_format = str(matrix_format).strip().lower()
+    if matrix_format in {"true", "yes", "on", "1"}:
+        matrix_format = "sparse"
+    elif matrix_format in {"false", "no", "off", "0"}:
+        matrix_format = "dense"
+    if matrix_format not in {"auto", "sparse", "dense"}:
+        matrix_format = "auto"
+
+    sparse_density_threshold = (
+        params.get("sparseDensityThreshold")
+        or os.environ.get("GRNSCOPE_ARBORETO_SPARSE_DENSITY_THRESHOLD")
+        or "0.35"
+    )
+    csv_chunk_size = (
+        params.get("csvChunkSize")
+        or os.environ.get("GRNSCOPE_ARBORETO_CSV_CHUNK_SIZE")
+        or "1000"
+    )
+    return [
+        f"--matrixFormat={matrix_format}",
+        f"--sparseDensityThreshold={sparse_density_threshold}",
+        f"--csvChunkSize={csv_chunk_size}",
+    ]
+
+
 def adaptive_genie3_tree_count(gene_count):
     if gene_count is None or gene_count <= 0:
         return 100
@@ -41,18 +84,18 @@ def adaptive_genie3_tree_count(gene_count):
     return 50
 
 
-def resolve_genie3_tree_count(expression_file):
+def resolve_genie3_tree_count(expression_file, input_orientation="samplesByGenes"):
     configured_tree_count = os.environ.get("GRNSCOPE_GENIE3_TREES")
     if configured_tree_count:
         try:
             return max(1, int(configured_tree_count))
         except ValueError:
             pass
-    return adaptive_genie3_tree_count(count_expression_genes(expression_file))
+    return adaptive_genie3_tree_count(count_expression_genes(expression_file, input_orientation))
 
 
-def genie3_tree_args(expression_file):
-    return [f"--genie3Trees={resolve_genie3_tree_count(expression_file)}"]
+def genie3_tree_args(expression_file, input_orientation="samplesByGenes"):
+    return [f"--genie3Trees={resolve_genie3_tree_count(expression_file, input_orientation)}"]
 
 
 class GENIE3Runner(Runner):
@@ -68,13 +111,7 @@ class GENIE3Runner(Runner):
         # Create ExpressionData.csv file in the created input directory
         GENIE3_EXPRESSION_FILE = self.working_dir / "ExpressionData.csv"
         if not GENIE3_EXPRESSION_FILE.exists():
-            # input data
-            ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
-
-            # Write .csv file — arboreto expects cells as rows, genes as columns
-            ExpressionData.T.to_csv(GENIE3_EXPRESSION_FILE,
-                                 sep = '\t', header  = True, index = True)
+            shutil.copy2(self.input_dir / self.exprData, GENIE3_EXPRESSION_FILE)
 
     def run(self):
         '''
@@ -87,17 +124,21 @@ class GENIE3Runner(Runner):
             if max_edges_per_target is not None
             else []
         )
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
+        script_mount = shlex.quote(f"{ARBORETO_SCRIPT}:/runArboreto.py:ro")
         cmdToRun = ' '.join(['docker run --rm',
-                            f"-v {self.working_dir}:/usr/working_dir",
-                            f"-v {ARBORETO_SCRIPT}:/runArboreto.py:ro",
+                            f"-v {work_mount}",
+                            f"-v {script_mount}",
                             '--expose=41269',
                             f'{self.image} /bin/sh -c \"time -v -o',
                             "/usr/working_dir/time.txt",
                             'python /runArboreto.py --algo=GENIE3',
                             '--inFile=/usr/working_dir/ExpressionData.csv',
                             '--outFile=/usr/working_dir/outFile.txt',
+                            f'--inputOrientation={ARBORETO_INPUT_ORIENTATION}',
                             *arboreto_dask_args(),
-                            *genie3_tree_args(self.working_dir / "ExpressionData.csv"),
+                            *arboreto_matrix_args(self.params),
+                            *genie3_tree_args(self.working_dir / "ExpressionData.csv", ARBORETO_INPUT_ORIENTATION),
                             *cap_arg, '\"'])
 
         self._run_docker(cmdToRun)
@@ -120,10 +161,12 @@ class GENIE3Runner(Runner):
             if max_edges_per_target is not None
             else []
         )
+        output_mount = shlex.quote(f"{output_root}:/usr/arboreto_runs")
+        script_mount = shlex.quote(f"{ARBORETO_SCRIPT}:/runArboreto.py:ro")
 
         cmdToRun = ' '.join(['docker run --rm',
-                            f"-v {output_root}:/usr/arboreto_runs",
-                            f"-v {ARBORETO_SCRIPT}:/runArboreto.py:ro",
+                            f"-v {output_mount}",
+                            f"-v {script_mount}",
                             '--expose=41269',
                             f'{first_runner.image} /bin/sh -c \"time -v -o',
                             "/usr/arboreto_runs/arboreto_batch_time.txt",
@@ -131,8 +174,10 @@ class GENIE3Runner(Runner):
                             '--runRoot=/usr/arboreto_runs',
                             f'--runIds={run_ids}',
                             '--algorithmId=GENIE3',
+                            f'--inputOrientation={ARBORETO_INPUT_ORIENTATION}',
                             *arboreto_dask_args(),
-                            *genie3_tree_args(first_runner.working_dir / "ExpressionData.csv"),
+                            *arboreto_matrix_args(first_runner.params),
+                            *genie3_tree_args(first_runner.working_dir / "ExpressionData.csv", ARBORETO_INPUT_ORIENTATION),
                             *cap_arg, '\"'])
 
         first_runner._run_docker(cmdToRun)
