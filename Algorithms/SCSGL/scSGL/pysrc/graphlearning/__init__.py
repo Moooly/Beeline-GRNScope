@@ -15,8 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from itertools import permutations
-
 import numpy as np
 import pandas as pd
 
@@ -52,14 +50,14 @@ def _binary_search(k, d, density_pos, density_neg):
     else:
         apos_max = 0
         apos_done = True
-        wpos = np.zeros((len(k, 1)))
+        wpos = np.zeros(len(k))
 
     if density_neg > 0:
         aneg_max = _find_bs_upper_bound(k, d, density_neg)
     else:
         aneg_max = 0
         aneg_done = True
-        wneg = np.zeros((len(k, 1)))
+        wneg = np.zeros(len(k))
 
     densities_pos = np.zeros(50)
     densities_neg = np.zeros(50)
@@ -168,6 +166,9 @@ def learn_signed_graph(X, pos_density, neg_density, assoc="dotprod", gene_names 
     # Calculate association matrix
     K = _association_matrix(X_nnzeros, assoc)
     k = K[np.triu_indices_from(K, k=1)]
+    if len(k) == 0:
+        return pd.DataFrame({"Gene1": [], "Gene2": [], "EdgeWeight": []})
+
     max_abs_k = np.max(np.abs(k)) if len(k) else 0
     if max_abs_k > 0:
         k /= max_abs_k
@@ -192,12 +193,15 @@ def learn_signed_graph(X, pos_density, neg_density, assoc="dotprod", gene_names 
     return convert_df(gene_names[nnzeros], wpos, wneg)
 
 def convert_df(gene_names, lpos, lneg):
-    gene1 = [i for i, _ in permutations(gene_names, r=2)]
-    gene2 = [j for _, j in permutations(gene_names, r=2)]
+    gene_names = np.asarray(gene_names)
     L = squareform(np.squeeze(lpos + lneg))
-    edge_weights = [L[i, j] for i, j in permutations(range(len(gene_names)), r=2) if i != j]
+    rows, cols = np.nonzero(L)
+    directed = rows != cols
+    rows = rows[directed]
+    cols = cols[directed]
 
-    grn_df = pd.DataFrame({"Gene1": gene1, "Gene2": gene2, "EdgeWeight": edge_weights})
-    grn_df = grn_df[grn_df.EdgeWeight != 0]
-    
-    return grn_df
+    return pd.DataFrame({
+        "Gene1": gene_names[rows],
+        "Gene2": gene_names[cols],
+        "EdgeWeight": L[rows, cols],
+    })

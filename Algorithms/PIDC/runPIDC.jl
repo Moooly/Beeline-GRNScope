@@ -6,7 +6,10 @@ algorithm = PIDCNetworkInference()
 
 dataset_name = string(ARGS[1])
 out_file = string(ARGS[2])
-matrix_format = length(ARGS) >= 3 ? lowercase(string(ARGS[3])) : "auto"
+requested_matrix_format = length(ARGS) >= 3 ? lowercase(string(ARGS[3])) : "auto"
+if requested_matrix_format in ("sparse", "true", "yes", "on", "1")
+    @warn "PIDC streams the input file, but NetworkInference requires dense per-gene Node vectors."
+end
 
 function detect_delimiter(path::AbstractString)
     open(path, "r") do io
@@ -61,7 +64,6 @@ end
 function get_nodes_streaming(
     path::AbstractString;
     delim = detect_delimiter(path),
-    matrix_format = "auto",
     discretizer = "bayesian_blocks",
     estimator = "maximum_likelihood",
     number_of_bins = 10,
@@ -104,7 +106,7 @@ function get_nodes_streaming(
     return nodes
 end
 
-@time genes = get_nodes_streaming(dataset_name, matrix_format = matrix_format);
+@time genes = get_nodes_streaming(dataset_name);
 
 @time network = InferredNetwork(algorithm, genes);
 

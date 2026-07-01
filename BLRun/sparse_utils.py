@@ -100,6 +100,10 @@ def write_gene_by_cell_matrix(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     submatrix = expression_matrix[:, cell_indices].tocsr()
     cell_names = [] if cell_names is None else [str(cell) for cell in cell_names]
+    if len(genes) != submatrix.shape[0]:
+        raise ValueError(f"Gene list has {len(genes)} entries, expected {submatrix.shape[0]}.")
+    if include_header and cell_names and len(cell_names) != submatrix.shape[1]:
+        raise ValueError(f"Header has {len(cell_names)} cells, expected {submatrix.shape[1]}.")
 
     with open(out_path, 'w', newline='') as handle:
         writer = csv.writer(handle, delimiter=delimiter)
@@ -109,7 +113,7 @@ def write_gene_by_cell_matrix(
             else:
                 writer.writerow(cell_names)
 
-        for gene, row_index in zip(genes, range(submatrix.shape[0])):
+        for row_index, gene in enumerate(genes):
             values = submatrix.getrow(row_index).toarray().ravel()
             if include_gene_column:
                 writer.writerow([gene, *values])
@@ -131,6 +135,8 @@ def write_cell_by_gene_matrix(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cell_by_gene = expression_matrix[:, cell_indices].T.tocsr()
     append_columns = append_columns or []
+    if len(genes) != cell_by_gene.shape[1]:
+        raise ValueError(f"Gene list has {len(genes)} entries, expected {cell_by_gene.shape[1]}.")
     for name, values in append_columns:
         if len(values) != cell_by_gene.shape[0]:
             raise ValueError(
