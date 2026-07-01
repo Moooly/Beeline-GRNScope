@@ -1,4 +1,5 @@
-import pandas as pd
+import shlex
+import shutil
 
 from BLRun.runner import Runner
 
@@ -16,22 +17,11 @@ class SCSGLRunner(Runner):
         # Create ExpressionData.csv file in the created input directory
         SCSGL_EXPRESSION_FILE = self.working_dir / "ExpressionData.csv"
         if not SCSGL_EXPRESSION_FILE.exists():
-            # input data
-            ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
-
-            # Write gene expression data in SCSGL folder
-            ExpressionData.to_csv(SCSGL_EXPRESSION_FILE,
-                                 sep = ',', header  = True)
+            shutil.copy2(self.input_dir / self.exprData, SCSGL_EXPRESSION_FILE)
 
         SCSGL_GROUND_TRUTH_FILE = self.working_dir / "GroundTruthNetwork.csv"
         if not SCSGL_GROUND_TRUTH_FILE.exists():
-            groundTruthNetworkData = pd.read_csv(self.ground_truth_file,
-                                         header = 0, index_col = 0)
-
-            # Write reference network data in SCSGL folder
-            groundTruthNetworkData.to_csv(SCSGL_GROUND_TRUTH_FILE,
-                                 sep = ',', header  = True)
+            shutil.copy2(self.ground_truth_file, SCSGL_GROUND_TRUTH_FILE)
 
     def run(self):
         '''
@@ -42,9 +32,17 @@ class SCSGLRunner(Runner):
         neg_density = str(self.params['neg_density'])
         assoc = str(self.params['assoc'])
         max_edges_per_target = str(self._resolve_max_edges_per_target() or 0)
+        matrix_format = str(self.params.get('matrixFormat') or self.params.get('sparseMatrix') or 'auto')
+        if matrix_format.lower() in {'true', 'yes', 'on', '1'}:
+            matrix_format = 'sparse'
+        elif matrix_format.lower() in {'false', 'no', 'off', '0'}:
+            matrix_format = 'dense'
+        sparse_density_threshold = str(self.params.get('sparseDensityThreshold', 0.35))
+        csv_chunk_size = str(self.params.get('csvChunkSize', 1000))
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
 
         cmdToRun = ' '.join(['docker run --rm',
-                            f"-v {self.working_dir}:/usr/working_dir",
+                            f"-v {work_mount}",
                             '--expose=41269',
                             f'{self.image} /bin/sh -c \"time -v -o',
                             "/usr/working_dir/time.txt", 'python run_scSGL.py',
@@ -52,6 +50,9 @@ class SCSGLRunner(Runner):
                             '--ground_truth_net_file=/usr/working_dir/GroundTruthNetwork.csv',
                             '--out_file=/usr/working_dir/outFile.txt',
                             '--pos_density='+pos_density, '--neg_density='+neg_density, '--assoc='+assoc,
+                            '--matrix_format='+matrix_format,
+                            '--sparse_density_threshold='+sparse_density_threshold,
+                            '--csv_chunk_size='+csv_chunk_size,
                             '--max_regulators_per_target='+max_edges_per_target,
                             '\"'])
 

@@ -1,4 +1,5 @@
-import pandas as pd
+import shlex
+import shutil
 
 from BLRun.runner import Runner
 
@@ -16,22 +17,28 @@ class PIDCRunner(Runner):
         # Create ExpressionData.csv file in the created input directory
         PIDC_EXPRESSION_FILE = self.working_dir / "ExpressionData.csv"
         if not PIDC_EXPRESSION_FILE.exists():
-            ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
-            ExpressionData.to_csv(PIDC_EXPRESSION_FILE,
-                                 sep = '\t', header  = True, index = True)
+            shutil.copy2(self.input_dir / self.exprData, PIDC_EXPRESSION_FILE)
 
     def run(self):
         '''
         Function to run PIDC algorithm
         '''
 
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
+        matrix_format = str(self.params.get('matrixFormat') or self.params.get('sparseMatrix') or 'auto')
+        if matrix_format.lower() in {'true', 'yes', 'on', '1'}:
+            matrix_format = 'sparse'
+        elif matrix_format.lower() in {'false', 'no', 'off', '0'}:
+            matrix_format = 'dense'
+
         cmdToRun = ' '.join(['docker run --rm',
-                            f"-v {self.working_dir}:/usr/working_dir",
+                            f"-v {work_mount}",
                             f'{self.image} /bin/sh -c \"time -v -o',
                             "/usr/working_dir/time.txt",
                             'julia runPIDC.jl',
-                            "/usr/working_dir/ExpressionData.csv", "/usr/working_dir/outFile.txt", '\"'])
+                            "/usr/working_dir/ExpressionData.csv",
+                            "/usr/working_dir/outFile.txt",
+                            matrix_format, '\"'])
 
         self._run_docker(cmdToRun)
 

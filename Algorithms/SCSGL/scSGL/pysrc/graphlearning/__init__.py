@@ -20,11 +20,17 @@ from itertools import permutations
 import numpy as np
 import pandas as pd
 
+from scipy import sparse
 from scipy.spatial.distance import squareform
 
 from . import unsigned
 from . import signed
 from ..associations import correlation, dotprod, proprho, zikendall
+
+ASSOCIATIONS = {"dotprod": dotprod.calc,
+                "correlation": correlation.calc,
+                "proprho": proprho.calc,
+                "zikendall": zikendall.calc}
 
 def _find_bs_upper_bound(k, d, density):
     for i in range(1, 100):
@@ -107,28 +113,67 @@ def _binary_search(k, d, density_pos, density_neg):
 
     return wpos, -wneg   
 
+def _sparse_corrcoef(counts):
+    counts = counts.tocsr()
+    n_samples = counts.shape[1]
+    if n_samples == 0:
+        raise ValueError("Sparse correlation requires at least one sample.")
+
+    row_sums = np.asarray(counts.sum(axis=1)).ravel().astype(np.float64)
+    row_sq_sums = np.asarray(counts.multiply(counts).sum(axis=1)).ravel().astype(np.float64)
+    norms = row_sq_sums - (row_sums * row_sums / float(n_samples))
+    norms[norms < 0] = 0
+    norms = np.sqrt(norms)
+
+    dot = (counts @ counts.T).toarray().astype(np.float64, copy=False)
+    centered_dot = dot - (row_sums[:, None] * row_sums[None, :] / float(n_samples))
+    denom = norms[:, None] * norms[None, :]
+    with np.errstate(invalid='ignore', divide='ignore'):
+        corr = centered_dot / denom
+    corr[~np.isfinite(corr)] = 0
+    np.fill_diagonal(corr, 1)
+    return corr
+
+
+def _association_matrix(X, assoc):
+    if sparse.issparse(X):
+        if assoc == "correlation":
+            return _sparse_corrcoef(X)
+        if assoc == "dotprod":
+            return (X @ X.T).toarray()
+        return ASSOCIATIONS[assoc](X.toarray())
+    return ASSOCIATIONS[assoc](X)
+
+
 def learn_signed_graph(X, pos_density, neg_density, assoc="dotprod", gene_names = None, 
                        verbose=False):
     # TODO: Docstring
     # TODO: Input check
 
-    assocs = {"dotprod": dotprod.calc,
-              "correlation": correlation.calc,
-              "proprho": proprho.calc,
-              "zikendall": zikendall.calc}
+    if assoc not in ASSOCIATIONS:
+        raise ValueError(f"Unknown association type: {assoc}")
 
     if gene_names is None:
         gene_names = np.arange(1, X.shape[0]+1)
+    else:
+        gene_names = np.asarray(gene_names)
 
     # Check if there is any genes that has no expression at all
-    nnzeros = np.count_nonzero(X, axis=1) != 0
+    if sparse.issparse(X):
+        nnzeros = np.asarray(X.getnnz(axis=1) != 0).ravel()
+    else:
+        nnzeros = np.count_nonzero(X, axis=1) != 0
     X_nnzeros = X[nnzeros, :]
 
     # Calculate association matrix
-    K = assocs[assoc](X_nnzeros)
+    K = _association_matrix(X_nnzeros, assoc)
     k = K[np.triu_indices_from(K, k=1)]
-    k /= np.max(np.abs(k))
-    d = np.diag(K)/np.max(np.abs(k))
+    max_abs_k = np.max(np.abs(k)) if len(k) else 0
+    if max_abs_k > 0:
+        k /= max_abs_k
+        d = np.diag(K)/max_abs_k
+    else:
+        d = np.diag(K)
 
     # Learn graph with desired density
     if verbose:
@@ -156,4 +201,3 @@ def convert_df(gene_names, lpos, lneg):
     grn_df = grn_df[grn_df.EdgeWeight != 0]
     
     return grn_df
-
