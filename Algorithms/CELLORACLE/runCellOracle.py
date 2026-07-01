@@ -175,6 +175,8 @@ def run_oracle(expression: pd.DataFrame, base_grn: pd.DataFrame, cluster_name: s
     adata = ad.AnnData(X=values)
     adata.obs_names = list(expression.columns)
     adata.var_names = list(expression.index)
+    adata.layers["raw_count"] = values.copy()
+    adata.layers["normalized_count"] = values.copy()
     adata.obs["grnscope_cluster"] = cluster_name
     adata.obsm["X_grnscope"] = make_embedding(values)
 
