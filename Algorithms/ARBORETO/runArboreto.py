@@ -19,6 +19,15 @@ GENIE3_RF_KWARGS = {
     'max_features': 'sqrt',
 }
 
+
+def ensure_sparse_matrix_array_property():
+    if not hasattr(sparse.spmatrix, 'A'):
+        sparse.spmatrix.A = property(lambda matrix: matrix.toarray())
+
+
+ensure_sparse_matrix_array_property()
+
+
 def parseArgs(args):
     parser = OptionParser()
 
