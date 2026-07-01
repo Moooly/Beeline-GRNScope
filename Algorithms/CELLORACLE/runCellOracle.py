@@ -75,6 +75,9 @@ def load_base_grn(species: str, base_grn: str):
     normalized_species = species.strip().lower()
     normalized_base = base_grn.strip()
 
+    if normalized_base == "mouse_scATAC_atlas" and normalized_species != "mouse":
+        raise ValueError("CellOracle mouse scATAC atlas base GRN is only available for mouse.")
+
     if normalized_species == "mouse" and normalized_base in {"auto", "mouse_scATAC_atlas"}:
         for loader_name in (
             "load_mouse_scATAC_atlas_base_GRN",
