@@ -9,8 +9,11 @@ HELP=false
 REMOVE_LOCAL=false
 REMOVE_GRNBEELINE=false
 VERBOSE_VALUE="-q "
+CELLORACLE_IMAGE=grnbeeline/celloracle:base
 
 # Images pulled from DockerHub (grnbeeline organisation).
+# CellOracle is intentionally not listed here because grnbeeline/celloracle:base
+# is not currently available as a public DockerHub image; it is built locally.
 # Referenced in both the --remove-grnbeeline-images block and the pull block.
 DOCKERHUB_IMAGES=(
     grnbeeline/arboreto:base
@@ -98,7 +101,29 @@ LOCAL_IMAGES=(
     scribe:base
     sincerities:base
     scsgl:base
+    grnbeeline/celloracle:base
 )
+
+build_celloracle_image() {
+    local force_build="${1:-false}"
+
+    if [[ "$force_build" != true ]] && docker image inspect "$CELLORACLE_IMAGE" >/dev/null 2>&1; then
+        echo "Docker container for CELLORACLE already exists at $CELLORACLE_IMAGE"
+        return
+    fi
+
+    echo "Building Docker container for CELLORACLE as $CELLORACLE_IMAGE..."
+    pushd "$ROOTDIR/Algorithms/CELLORACLE" >/dev/null
+    docker build -t "$CELLORACLE_IMAGE" .
+    if ([ $? = 0 ] && [ "$(docker images -q "$CELLORACLE_IMAGE" 2>/dev/null)" != "" ]); then
+        echo "Docker container for CELLORACLE is built and tagged as $CELLORACLE_IMAGE"
+    elif [ "$(docker images -q "$CELLORACLE_IMAGE" 2>/dev/null)" != "" ]; then
+        echo "Docker container failed to build, but an existing image exists at $CELLORACLE_IMAGE"
+    else
+        echo "Oops! Unable to build Docker container for CELLORACLE"
+    fi
+    popd >/dev/null
+}
 
 if [[ "$REMOVE_GRNBEELINE" = true ]]; then
     echo "Removing grnbeeline DockerHub images..."
@@ -293,9 +318,13 @@ if [[ "$BUILD" = true ]]; then
         echo "Oops! Unable to build Docker container for SCSGL"
     fi
     popd
+
+    build_celloracle_image true
 else
     echo "Pulling docker images from https://hub.docker.com/u/grnbeeline..."
     for image in "${DOCKERHUB_IMAGES[@]}"; do
         docker image pull $VERBOSE_VALUE "$image"
     done
+
+    build_celloracle_image false
 fi

@@ -39,7 +39,12 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda \
         jupyter \
     && micromamba clean -a -y
 
-RUN micromamba run -n base python -m pip install --no-cache-dir --no-deps celloracle==0.20.0 \
+RUN micromamba run -n base python -m pip install --no-cache-dir --only-binary=:all: --no-deps celloracle==0.20.0 \
     && micromamba run -n base python -c "import celloracle, velocyto, scanpy, anndata, genomepy, goatools, gimmemotifs, igraph, louvain; print('CellOracle image import check passed')"
 
 COPY runCellOracle.py /runCellOracle.py
+
+# BEELINE bind-mounts host-owned working directories and expects algorithm
+# containers to write outputs there. Running as root avoids UID mismatches on
+# Linux hosts while keeping the conda environment installed above.
+USER root
