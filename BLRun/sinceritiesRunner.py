@@ -1,6 +1,12 @@
 import pandas as pd
+import shlex
 
 from BLRun.runner import Runner
+from BLRun.sparse_utils import (
+    cell_positions,
+    read_expression_sparse,
+    write_cell_by_gene_matrix,
+)
 
 
 class SINCERITIESRunner(Runner):
@@ -13,8 +19,10 @@ class SINCERITIESRunner(Runner):
         this function will not do anything.
         '''
 
-        ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
+        ExpressionData, genes, cells, density = read_expression_sparse(
+            self.input_dir / self.exprData,
+            chunksize=self.params.get('csvChunkSize', 1000),
+        )
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
 
@@ -24,16 +32,22 @@ class SINCERITIESRunner(Runner):
             colName = colNames[idx]
             index = PTData[colName].index[PTData[colName].notnull()]
             exprName = "ExpressionData"+str(idx)+".csv"
-            newExpressionData = ExpressionData.loc[:,index].T
+            selected_cells = index.astype(str).tolist()
             # Perform quantile binning as recommeded in the paper
             # http://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.qcut.html#pandas.qcut
             nBins = int(self.params['nBins'])
             tQuantiles = pd.qcut(PTData.loc[index,colName], q = nBins, duplicates ='drop')
             mid = [(a.left + a.right)/2 for a in tQuantiles]
 
-            newExpressionData['Time'] = mid
-            newExpressionData.to_csv(self.working_dir / exprName,
-                                 sep = ',', header  = True, index = False)
+            write_cell_by_gene_matrix(
+                ExpressionData,
+                genes,
+                cell_positions(cells, selected_cells),
+                self.working_dir / exprName,
+                delimiter=',',
+                include_header=True,
+                append_columns=[('Time', mid)],
+            )
 
     def run(self):
         '''
@@ -44,9 +58,10 @@ class SINCERITIESRunner(Runner):
                              header = 0, index_col = 0)
 
         colNames = PTData.columns
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
         for idx in range(len(colNames)):
             cmdToRun = ' '.join(['docker run --rm',
-                                f"-v {self.working_dir}:/usr/working_dir",
+                                f"-v {work_mount}",
                                 f'{self.image} /bin/sh -c \"time -v -o',
                                 "/usr/working_dir/time" + str(idx) + ".txt",
                                 'Rscript MAIN.R',

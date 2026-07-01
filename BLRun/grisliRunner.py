@@ -1,7 +1,13 @@
 import os
 import pandas as pd
+import shlex
 
 from BLRun.runner import Runner
+from BLRun.sparse_utils import (
+    cell_positions,
+    read_expression_sparse,
+    write_gene_by_cell_matrix,
+)
 
 
 class GRISLIRunner(Runner):
@@ -14,8 +20,10 @@ class GRISLIRunner(Runner):
         this function will not do anything.
         '''
 
-        ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
+        ExpressionData, genes, cells, density = read_expression_sparse(
+            self.input_dir / self.exprData,
+            chunksize=self.params.get('csvChunkSize', 1000),
+        )
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
 
@@ -28,8 +36,16 @@ class GRISLIRunner(Runner):
             index = PTData[colName].index[PTData[colName].notnull()]
 
             exprName = str(idx)+"/ExpressionData.tsv"
-            ExpressionData.loc[:,index].to_csv(self.working_dir / exprName,
-                                     sep = '\t', header  = False, index = False)
+            selected_cells = index.astype(str).tolist()
+            write_gene_by_cell_matrix(
+                ExpressionData,
+                genes,
+                cell_positions(cells, selected_cells),
+                self.working_dir / exprName,
+                delimiter='\t',
+                include_header=False,
+                include_gene_column=False,
+            )
 
             cellName = str(idx)+"/PseudoTime.tsv"
             ptDF = PTData.loc[index,[colName]]
@@ -49,11 +65,12 @@ class GRISLIRunner(Runner):
                              header = 0, index_col = 0)
 
         colNames = PTData.columns
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
         for idx in range(len(colNames)):
             os.makedirs(str(self.working_dir / str(idx)), exist_ok = True)
 
             cmdToRun = ' '.join(['docker run --rm',
-                                f"-v {self.working_dir}:/usr/working_dir",
+                                f"-v {work_mount}",
                                 f'{self.image} /bin/sh -c \"time -v -o',
                                 "/usr/working_dir/time" + str(idx) + ".txt",
                                 './GRISLI',

@@ -1,7 +1,13 @@
 import os
 import pandas as pd
+import shlex
 
 from BLRun.runner import Runner
+from BLRun.sparse_utils import (
+    cell_positions,
+    read_expression_sparse,
+    write_cell_by_gene_matrix,
+)
 
 
 class SINGERunner(Runner):
@@ -14,8 +20,10 @@ class SINGERunner(Runner):
         this function will not do anything.
         '''
 
-        ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
+        ExpressionData, genes, cells, density = read_expression_sparse(
+            self.input_dir / self.exprData,
+            chunksize=self.params.get('csvChunkSize', 1000),
+        )
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
 
@@ -25,10 +33,16 @@ class SINGERunner(Runner):
             colName = colNames[idx]
             index = PTData[colName].index[PTData[colName].notnull()]
             exprName = "ExpressionData"+str(idx)+".csv"
-            newExpressionData = ExpressionData.loc[:,index].T
-            newExpressionData['PseudoTime'] = PTData.loc[index,colName]
-            newExpressionData.to_csv(self.working_dir / exprName,
-                                 sep = ',', header  = True, index = False)
+            selected_cells = index.astype(str).tolist()
+            write_cell_by_gene_matrix(
+                ExpressionData,
+                genes,
+                cell_positions(cells, selected_cells),
+                self.working_dir / exprName,
+                delimiter=',',
+                include_header=True,
+                append_columns=[('PseudoTime', PTData.loc[index, colName].tolist())],
+            )
 
     def run(self):
         '''
@@ -68,6 +82,7 @@ class SINGERunner(Runner):
                              header = 0, index_col = 0)
 
         colNames = PTData.columns
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
         for idx in range(len(colNames)):
             os.makedirs(str(self.working_dir / str(idx)), exist_ok = True)
 
@@ -99,7 +114,7 @@ class SINGERunner(Runner):
                                  'save(\'-v7\',\'' + geneListMat + '\', \'gene_list\')\\"'
 
             cmdToRun = ' '.join(['docker run --rm --entrypoint /bin/sh',
-                                f"-v {self.working_dir}:/usr/working_dir",
+                                f"-v {work_mount}",
                                 f'{self.image} -c \"echo \\"',
                                  params_str, '\\" >', paramsFile, '&&', symlink_out_file, '&&', convert_input_to_matfile,
                                  '&& time -v -o', "/usr/working_dir/time" + str(idx) + ".txt",

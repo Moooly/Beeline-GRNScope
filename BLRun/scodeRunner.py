@@ -1,7 +1,13 @@
 import os
 import pandas as pd
+import shlex
 
 from BLRun.runner import Runner
+from BLRun.sparse_utils import (
+    cell_positions,
+    read_expression_sparse,
+    write_gene_by_cell_matrix,
+)
 
 
 class SCODERunner(Runner):
@@ -14,8 +20,10 @@ class SCODERunner(Runner):
         this function will not do anything.
         '''
 
-        ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
+        ExpressionData, genes, cells, density = read_expression_sparse(
+            self.input_dir / self.exprData,
+            chunksize=self.params.get('csvChunkSize', 1000),
+        )
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
 
@@ -29,8 +37,16 @@ class SCODERunner(Runner):
             colName = colNames[idx]
             index = PTData[colName].index[PTData[colName].notnull()]
             exprName = "ExpressionData"+str(idx)+".csv"
-            ExpressionData.loc[:,index].to_csv(self.working_dir / exprName,
-                                     sep = '\t', header  = False, index = False)
+            selected_cells = index.astype(str).tolist()
+            write_gene_by_cell_matrix(
+                ExpressionData,
+                genes,
+                cell_positions(cells, selected_cells),
+                self.working_dir / exprName,
+                delimiter='\t',
+                include_header=False,
+                include_gene_column=False,
+            )
             cellName = "PseudoTime"+str(idx)+".csv"
             ptDF = PTData.loc[index,[colName]]
             # SCODE expects a column labeled PseudoTime.
@@ -52,19 +68,18 @@ class SCODERunner(Runner):
                              header = 0, index_col = 0)
 
         colNames = PTData.columns
+        genes = self._read_gene_names(self.input_dir / self.exprData)
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
 
         for idx in range(len(colNames)):
-
-            ExpressionData = pd.read_csv(self.working_dir /
-                                         ("ExpressionData"+str(idx)+".csv"),
-                                         header = None, index_col = None, sep ='\t')
-            nCells = str(ExpressionData.shape[1])
-            nGenes = str(ExpressionData.shape[0])
+            colName = colNames[idx]
+            nCells = str(int(PTData[colName].notnull().sum()))
+            nGenes = str(len(genes))
 
             cmdToRun = ' '.join(['docker run --rm',
                                 f'--user {os.getuid()}:{os.getgid()}',
                                 '-e HOME=/tmp',
-                                f"-v {self.working_dir}:/usr/working_dir",
+                                f"-v {work_mount}",
                                 f'{self.image} /bin/sh -c \"time -v -o',
                                 "/usr/working_dir/time" + str(idx) + ".txt",
                                 'ruby run_R.rb',

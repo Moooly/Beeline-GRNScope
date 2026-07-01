@@ -1,6 +1,7 @@
 suppressPackageStartupMessages(library(monocle, warn.conflicts = FALSE , quietly = TRUE))
 suppressPackageStartupMessages(library(Scribe, warn.conflicts = FALSE, quietly = TRUE))
 suppressPackageStartupMessages(library (optparse, warn.conflicts = FALSE, quietly = TRUE))
+suppressPackageStartupMessages(library(Matrix, warn.conflicts = FALSE, quietly = TRUE))
 
 option_list <- list (
               make_option(c("-e","--expressionFile"), type = 'character',
@@ -92,13 +93,14 @@ if (length(arguments$cellFile) == 0){
   exprMatrix <- read.delim(arguments$expressionFile, row.names = 1, sep = ',', check.names=FALSE)
   cellData <- read.delim(arguments$cellFile, row.names = 1, sep = ',')
   geneData <- read.delim(arguments$geneFile, row.names = 1, sep = ',')
+  sparseExprMatrix <- Matrix(as.matrix(exprMatrix), sparse = TRUE)
   cd <- new("AnnotatedDataFrame", data = cellData)
   gd <- new("AnnotatedDataFrame", data = geneData)
 
 # Use uninormal if it is simulated data
 if (arguments$expressionFamily == 'uninormal'){
   cat("Using uninormal() as expression family.\n")
-  CDS <- newCellDataSet(as(as.matrix(exprMatrix), "sparseMatrix"),
+  CDS <- newCellDataSet(sparseExprMatrix,
                        phenoData = cd,
                        featureData = gd,
                        lowerDetectionLimit = arguments$lowerDetectionLimit,
@@ -108,7 +110,7 @@ sizeFactors(CDS) <- 1 # Same as the one in neuronal_sim_cCDS
 } else{
   # For scRNA-Seq data (counts, RPKM/FPKM)
   cat("Using negbinomial.size() as expression family.\n")
-CDS <- newCellDataSet(as(as.matrix(exprMatrix), "sparseMatrix"),
+CDS <- newCellDataSet(sparseExprMatrix,
                        phenoData = cd,
                        featureData = gd,
                        lowerDetectionLimit = arguments$lowerDetectionLimit,

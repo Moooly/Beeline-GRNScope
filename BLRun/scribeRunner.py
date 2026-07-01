@@ -1,6 +1,12 @@
 import pandas as pd
+import shlex
 
 from BLRun.runner import Runner
+from BLRun.sparse_utils import (
+    cell_positions,
+    read_expression_sparse,
+    write_gene_by_cell_matrix,
+)
 
 
 class SCRIBERunner(Runner):
@@ -13,8 +19,10 @@ class SCRIBERunner(Runner):
         this function will not do anything.
         '''
 
-        ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
+        ExpressionData, genes, cells, density = read_expression_sparse(
+            self.input_dir / self.exprData,
+            chunksize=self.params.get('csvChunkSize', 1000),
+        )
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
 
@@ -24,8 +32,18 @@ class SCRIBERunner(Runner):
             colName = colNames[idx]
             index = PTData[colName].index[PTData[colName].notnull()]
             exprName = "ExpressionData"+str(idx)+".csv"
-            ExpressionData.loc[:,index].to_csv(self.working_dir / exprName,
-                                     sep = ',', header  = True, index = True)
+            selected_cells = index.astype(str).tolist()
+            write_gene_by_cell_matrix(
+                ExpressionData,
+                genes,
+                cell_positions(cells, selected_cells),
+                self.working_dir / exprName,
+                delimiter=',',
+                include_header=True,
+                include_gene_column=True,
+                header_gene_label='',
+                cell_names=selected_cells,
+            )
             cellName = "pseudoTimeData"+str(idx)+".csv"
             ptDF = PTData.loc[index,[colName]]
             # Scribe expects a column labeled Time.
@@ -38,9 +56,9 @@ class SCRIBERunner(Runner):
         if not SCRIBE_GENE_FILE.exists():
             # required column!!
             geneDict = {}
-            geneDict['gene_short_name'] = [gene.replace('x_', '') for gene in ExpressionData.index]
+            geneDict['gene_short_name'] = [gene.replace('x_', '') for gene in genes]
 
-            geneDF = pd.DataFrame(geneDict, index = ExpressionData.index)
+            geneDF = pd.DataFrame(geneDict, index = genes)
             geneDF.to_csv(SCRIBE_GENE_FILE,
                           sep = ',', header = True)
 
@@ -62,6 +80,7 @@ class SCRIBERunner(Runner):
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
         colNames = PTData.columns
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
 
         for idx in range(len(colNames)):
             # Specify file names for inputs and outputs
@@ -71,7 +90,7 @@ class SCRIBERunner(Runner):
             timeFile = 'time'+str(idx)+".txt"
 
             cmdToRun = ' '.join(['docker run --rm',
-                           f"-v {self.working_dir}:/usr/working_dir",
+                           f"-v {work_mount}",
                            f'{self.image} /bin/sh -c \"time -v -o',
                            "/usr/working_dir/" + timeFile, 'Rscript runScribe.R',
                            '-e', "/usr/working_dir/" + exprName, '-c', "/usr/working_dir/" + cellName,

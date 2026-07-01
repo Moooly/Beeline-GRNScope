@@ -1,6 +1,8 @@
 import pandas as pd
+import shlex
 
 from BLRun.runner import Runner
+from BLRun.sparse_utils import read_expression_sparse, write_cell_by_gene_matrix
 
 
 class JUMP3Runner(Runner):
@@ -16,35 +18,50 @@ class JUMP3Runner(Runner):
         # Create ExpressionData.csv file in the created input directory
         JUMP3_EXPRESSION_FILE = self.working_dir / "ExpressionData.csv"
         if not JUMP3_EXPRESSION_FILE.exists():
-            ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
-            newExpressionData = ExpressionData.T.copy()
+            ExpressionData, genes, cells, density = read_expression_sparse(
+                self.input_dir / self.exprData,
+                chunksize=self.params.get('csvChunkSize', 1000),
+            )
             PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                                  header = 0, index_col = 0)
-            # make sure the indices are strings for both dataframes
-            newExpressionData.index = newExpressionData.index.map(str)
             PTData.index = PTData.index.map(str)
             # Acc. to JUMP3:
             # In input argument Time, the first time point of each time series must be 0.
             # Also has to be an integer!
-            newExpressionData['Time'] = PTData['PseudoTime']-PTData['PseudoTime'].min()
+            aligned_pt = PTData.reindex(cells)
+            missing_pt = aligned_pt.index[aligned_pt['PseudoTime'].isnull()].tolist()
+            if missing_pt:
+                preview = ', '.join(missing_pt[:5])
+                raise KeyError(f"JUMP3 pseudotime is missing {len(missing_pt)} expression cells: {preview}")
+            time_values = (aligned_pt['PseudoTime'] - PTData['PseudoTime'].min()).tolist()
             if 'Experiment' in PTData:
-                newExpressionData['Experiment'] = PTData['Experiment']
+                experiment_values = aligned_pt['Experiment'].tolist()
             else:
                 # generate it from cell number Ex_y, where x is experiment number
                 #newExpressionData['Experiment'] = [int(x.split('_')[0].strip('E')) for x in PTData.index.astype(str)]
-                newExpressionData['Experiment'] = 1
+                experiment_values = [1] * len(cells)
 
-            newExpressionData.to_csv(JUMP3_EXPRESSION_FILE,
-                                 sep = ',', header  = True, index = False)
+            write_cell_by_gene_matrix(
+                ExpressionData,
+                genes,
+                list(range(len(cells))),
+                JUMP3_EXPRESSION_FILE,
+                delimiter=',',
+                include_header=True,
+                append_columns=[
+                    ('Time', time_values),
+                    ('Experiment', experiment_values),
+                ],
+            )
 
     def run(self):
         '''
         Function to run JUMP3 algorithm
         '''
 
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
         cmdToRun = ' '.join(['docker run --rm',
-                            f"-v {self.working_dir}:/usr/working_dir",
+                            f"-v {work_mount}",
                             f'{self.image} /bin/sh -c \"time -v -o',
                             "/usr/working_dir/time.txt",
                             './runJump3',
@@ -67,7 +84,7 @@ class JUMP3Runner(Runner):
         # Read output
         OutDF = pd.read_csv(outFile, sep = ',')
 
-        gene_list = self._read_gene_names(self.input_dir / 'ExpressionData.csv')
+        gene_list = self._read_gene_names(self.input_dir / self.exprData)
         self._write_ranked_edges_from_matrix(
             OutDF.values,
             gene_list,

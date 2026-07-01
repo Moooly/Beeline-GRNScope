@@ -1,6 +1,12 @@
 import pandas as pd
+import shlex
 
 from BLRun.runner import Runner
+from BLRun.sparse_utils import (
+    cell_positions,
+    read_expression_sparse,
+    write_gene_by_cell_matrix,
+)
 
 
 class GRNVBEMRunner(Runner):
@@ -15,8 +21,10 @@ class GRNVBEMRunner(Runner):
         the rows. If the files already exist, this function will overwrite it.
         '''
 
-        ExpressionData = pd.read_csv(self.input_dir / self.exprData,
-                                         header = 0, index_col = 0)
+        ExpressionData, genes, cells, density = read_expression_sparse(
+            self.input_dir / self.exprData,
+            chunksize=self.params.get('csvChunkSize', 1000),
+        )
         PTData = pd.read_csv(self.input_dir / self.pseudoTimeData,
                              header = 0, index_col = 0)
 
@@ -28,16 +36,19 @@ class GRNVBEMRunner(Runner):
             exprName = "ExpressionData"+str(idx)+".csv"
 
             subPT = PTData.loc[index,:]
-            subExpr = ExpressionData[index]
             # Order columns by PseudoTime
-            newExpressionData = subExpr[subPT.sort_values([colName]).index.astype(str)]
-
-            newExpressionData.insert(loc = 0, column = 'GENES', \
-                                                         value = newExpressionData.index)
-
-            # Write .csv file
-            newExpressionData.to_csv(self.working_dir / exprName,
-                                 sep = ',', header  = True, index = False)
+            selected_cells = subPT.sort_values([colName]).index.astype(str).tolist()
+            write_gene_by_cell_matrix(
+                ExpressionData,
+                genes,
+                cell_positions(cells, selected_cells),
+                self.working_dir / exprName,
+                delimiter=',',
+                include_header=True,
+                include_gene_column=True,
+                header_gene_label='GENES',
+                cell_names=selected_cells,
+            )
 
     def run(self):
         '''
@@ -48,9 +59,10 @@ class GRNVBEMRunner(Runner):
                              header = 0, index_col = 0)
 
         colNames = PTData.columns
+        work_mount = shlex.quote(f"{self.working_dir}:/usr/working_dir")
         for idx in range(len(colNames)):
             cmdToRun = ' '.join(['docker run --rm',
-                                f"-v {self.working_dir}:/usr/working_dir",
+                                f"-v {work_mount}",
                                 f'{self.image} /bin/sh -c \"time -v -o',
                                 "/usr/working_dir/time" + str(idx) + ".txt",
                                 './GRNVBEM',
