@@ -12,7 +12,7 @@ USER $MAMBA_USER
 RUN micromamba install -y -n base -c conda-forge -c bioconda \
         python=3.10 \
         pip \
-        setuptools \
+        'setuptools<80' \
         wheel \
         cython \
         numpy=1.26.4 \
